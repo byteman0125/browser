@@ -8,15 +8,20 @@
     "dev": "electron . --dev",
     "build": "electron-builder",
     "build-win": "electron-builder --win",
+    "build-installer": "electron-builder --win nsis",
+    "build-portable": "electron-builder --win portable",
+    "build-simple": "electron-builder --win portable --config.win.target=portable",
     "pack": "electron-builder --dir",
-    "dist": "electron-builder"
+    "dist": "electron-builder",
+    "clean": "rimraf dist"
   },
   "keywords": ["browser", "electron", "stealth", "privacy"],
   "author": "StealthBrowser",
   "license": "MIT",
   "devDependencies": {
     "electron": "^27.0.0",
-    "electron-builder": "^24.6.4"
+    "electron-builder": "^24.6.4",
+    "rimraf": "^5.0.5"
   },
   "dependencies": {
     "auto-launch": "^5.0.5",
@@ -34,8 +39,28 @@
       "node_modules/**/*"
     ],
     "win": {
-      "target": "portable",
-      "icon": "assets/icon.ico"
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "StealthBrowser",
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true,
+      "artifactName": "StealthBrowser-Setup-${version}.exe",
+      "sign": false
     },
     "linux": {
       "target": "AppImage",

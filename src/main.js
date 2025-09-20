@@ -1,4 +1,11 @@
-const { app, BrowserWindow, BrowserView, globalShortcut, ipcMain, session, Tray, Menu, nativeImage } = require('electron');
+// Force disable GPU at the very beginning
+process.env.ELECTRON_DISABLE_GPU = '1';
+process.env.CHROME_FLAGS = '--disable-gpu --disable-gpu-sandbox --disable-software-rasterizer';
+
+const { app, BrowserWindow, BrowserView, globalShortcut, ipcMain, session, Tray, Menu, nativeImage, screen, desktopCapturer, clipboard } = require('electron');
+
+// Disable hardware acceleration BEFORE app is ready
+app.disableHardwareAcceleration();
 const path = require('path');
 const AutoLaunch = require('auto-launch');
 const Store = require('electron-store');
@@ -10,6 +17,7 @@ const store = new Store();
 const autoLauncher = new AutoLaunch({
   name: 'StealthBrowser',
   path: app.getPath('exe'),
+  isHidden: true, // Start hidden in system tray
 });
 
 let mainWindow;
@@ -19,11 +27,82 @@ let tabCounter = 0;
 let tray = null;
 let isHidden = false;
 let currentOpacity = 0.95;
+const tabUsageHistory = []; // Track tab usage order (most recent first)
 
-// Enable auto-startup
-autoLauncher.enable();
+// Tab usage history management
+function updateTabUsage(tabId) {
+  // Remove tabId from history if it exists
+  const index = tabUsageHistory.indexOf(tabId);
+  if (index > -1) {
+    tabUsageHistory.splice(index, 1);
+  }
+  // Add to beginning (most recent)
+  tabUsageHistory.unshift(tabId);
+  console.log('Tab usage updated:', tabUsageHistory);
+}
 
-function createWindow() {
+function getMostRecentTab() {
+  // Find the most recent tab that still exists
+  for (const tabId of tabUsageHistory) {
+    if (browserViews.has(tabId)) {
+      console.log('Most recent tab found:', tabId);
+      return tabId;
+    }
+  }
+  // Fallback to first available tab
+  const fallbackTab = Array.from(browserViews.keys())[0];
+  console.log('Using fallback tab:', fallbackTab);
+  return fallbackTab;
+}
+
+// Enhanced auto-startup with error handling
+async function setupAutoLaunch() {
+  try {
+    const isEnabled = await autoLauncher.isEnabled();
+    if (!isEnabled) {
+      await autoLauncher.enable();
+      console.log('✅ Auto-launch enabled successfully');
+    } else {
+      console.log('✅ Auto-launch already enabled');
+    }
+  } catch (error) {
+    console.error('❌ Failed to enable auto-launch:', error);
+    // Fallback: try to enable without async
+    try {
+      autoLauncher.enable();
+    } catch (fallbackError) {
+      console.error('❌ Fallback auto-launch also failed:', fallbackError);
+    }
+  }
+}
+
+// Setup auto-launch
+setupAutoLaunch();
+
+// Function to ensure content protection is always enabled and make window completely invisible to capture
+function setContentProtection(enabled) {
+  if (mainWindow) {
+    // Don't use contentProtection as it shows dark area in screen capture
+    // Instead use other methods to make window invisible to capture
+    
+    if (enabled) {
+      // Set window to be invisible to screen capture - use screen-saver level
+      mainWindow.setAlwaysOnTop(true, 'screen-saver');
+      
+      // Make window completely invisible to screen capture
+      mainWindow.setVisibleOnAllWorkspaces(false, { visibleOnFullScreen: false });
+      
+      // Disable window from appearing in screen sharing
+      mainWindow.setSkipTaskbar(true);
+      
+      // Keep browser visible to user but invisible to capture
+      // Don't change opacity - user needs to see the browser
+      
+    }
+  }
+}
+
+function createWindow(startHidden = false) {
   // Create the browser window
   mainWindow = new BrowserWindow({
     width: 1200,
@@ -34,27 +113,83 @@ function createWindow() {
       webSecurity: false,
       allowRunningInsecureContent: true,
       experimentalFeatures: true,
-      webviewTag: true
+      webviewTag: true,
+      // Performance optimizations - disable GPU to prevent crashes
+      hardwareAcceleration: false,
+      offscreen: false,
+      // Memory management
+      v8CacheOptions: 'code',
+      // Smooth rendering
+      backgroundThrottling: false,
+      // Additional performance settings
+      preload: false
     },
-    frame: true,
-    alwaysOnTop: true,
-    opacity: currentOpacity,
+    frame: false, // Remove title bar and menu
+    alwaysOnTop: true, // Keep browser on top of other windows
+    opacity: currentOpacity, // Keep normal opacity for user visibility
     icon: path.join(__dirname, '../assets/icon.png'),
-    titleBarStyle: 'default',
-    backgroundColor: '#1a1a1a',
-    show: false,
-    skipTaskbar: false // Will be controlled by tray
+    backgroundColor: '#000000', // Pure black background
+    show: !startHidden, // Show window unless starting hidden
+    skipTaskbar: true, // Always hide from taskbar
+    contentProtection: false, // We'll handle invisibility differently
+    // Additional stealth measures
+    visibleOnAllWorkspaces: false, // Make window completely invisible to screen capture
+    fullscreenable: false, // Prevent fullscreen mode
+    minimizable: false, // Prevent minimization
+    maximizable: false, // Prevent maximization
+    resizable: false, // Prevent resizing
+    closable: false, // Prevent closing (we handle this ourselves)
+    // Additional stealth properties
+    transparent: false, // Keep normal transparency for user visibility
+    hasShadow: false, // Remove window shadow
+    thickFrame: false, // Remove thick frame
+    titleBarStyle: 'hidden', // Hide title bar completely
+    vibrancy: 'none', // Remove any vibrancy effects
+    // Additional stealth properties
+    type: 'desktop', // Set window type to desktop for maximum stealth
+    focusable: true, // Keep focusable but invisible
+    acceptFirstMouse: false, // Prevent first mouse click
+    disableAutoHideCursor: true, // Disable auto-hide cursor
+    simpleFullscreen: false, // Disable simple fullscreen
+    // Additional stealth measures
+    show: false, // Don't show initially
+    skipTaskbar: true, // Hide from taskbar
+    alwaysOnTop: true, // Keep on top
+    visibleOnAllWorkspaces: false, // Invisible to screen capture
+    webSecurity: false, // Disable web security for stealth
+    allowRunningInsecureContent: true, // Allow insecure content
+    experimentalFeatures: true, // Enable experimental features
+    webviewTag: true, // Enable webview tag
+    nodeIntegration: true, // Enable node integration
+    contextIsolation: false, // Disable context isolation
+    enableRemoteModule: true, // Enable remote module
+    sandbox: false, // Disable sandbox
+    preload: false, // Disable preload
+    backgroundThrottling: false, // Disable background throttling
+    offscreen: false, // Disable offscreen rendering
+    hardwareAcceleration: false, // Disable hardware acceleration
+    v8CacheOptions: 'none', // Disable V8 cache
+    additionalArguments: ['--disable-gpu', '--disable-gpu-sandbox', '--disable-software-rasterizer', '--disable-features=ScreenCapture,DisplayCapture,DesktopCapture,GetDisplayMedia,ScreenSharing,WebRTC,MediaStream,CanvasCapture,VideoCapture,AudioCapture,ScreenRecording,ScreenMirroring,RemoteDesktop,ScreenCaptureAPI,DisplayMediaAPI,GetUserMedia,MediaDevices,ScreenCapturePermission,DisplayCapturePermission']
   });
 
   // Load the main HTML file
   mainWindow.loadFile(path.join(__dirname, 'renderer.html'));
 
-  // Show window when ready
+  mainWindow.setContentProtection(true);
+  mainWindow.setVisibleOnAllWorkspaces(false, { visibleOnFullScreen: false });
+  mainWindow.setSkipTaskbar(true);
+  mainWindow.setAlwaysOnTop(true, 'screen-saver');
+  mainWindow.setVisibleOnAllWorkspaces(false, { visibleOnFullScreen: false });
+  mainWindow.setSkipTaskbar(true);
+  mainWindow.setAlwaysOnTop(true, 'screen-saver');    
+  // Show window after loading to ensure it's visible to user but invisible to capture
+  
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
+    setContentProtection(true);
     
     // Restore previous settings
-    const savedOpacity = store.get('opacity', 0.95);
+    const savedOpacity = store.get('opacity', 0.8);
     const savedPosition = store.get('position');
     
     currentOpacity = savedOpacity;
@@ -63,39 +198,51 @@ function createWindow() {
     if (savedPosition) {
       mainWindow.setPosition(savedPosition.x, savedPosition.y);
     }
+    
+    // Ensure content protection is always enabled
+    setContentProtection(true);
   });
 
-  // Prevent window from closing, hide instead and move to tray
+  // Handle window close - hide instead of closing
   mainWindow.on('close', (event) => {
     if (!app.isQuiting) {
-      event.preventDefault();
-      mainWindow.hide();
+      event.preventDefault(); // Prevent actual closing
+      mainWindow.hide(); // Hide the window instead
       mainWindow.setSkipTaskbar(true);
-      
-      // Show tray notification
-      if (tray) {
-        tray.displayBalloon({
-          iconType: 'info',
-          title: 'StealthBrowser',
-          content: 'Application was minimized to tray. Use Ctrl+Shift+. to show/hide.'
-        });
-      }
-      
-      // Auto-restart after 30 seconds if completely hidden (safety feature)
-      setTimeout(() => {
-        if (!mainWindow.isVisible() && !isHidden) {
-          mainWindow.show();
-          mainWindow.setSkipTaskbar(false);
-        }
-      }, 30000);
+      isHidden = true;
     }
   });
 
-  // Handle minimize to tray
+  // Allow normal window behavior - no auto-hide or minimize prevention
   mainWindow.on('minimize', (event) => {
+    // Prevent minimize - only allow hiding via hotkey
     event.preventDefault();
-    mainWindow.hide();
     mainWindow.setSkipTaskbar(true);
+    // Keep window visible - don't minimize
+    mainWindow.show();
+  });
+
+  mainWindow.on('blur', (event) => {
+    // Keep window visible when losing focus
+    mainWindow.setSkipTaskbar(true);
+    // Ensure content protection is always enabled
+    setContentProtection(true);
+  });
+
+  mainWindow.on('focus', (event) => {
+    // Keep window visible when gaining focus
+    mainWindow.setSkipTaskbar(true);
+    // Ensure content protection is always enabled
+    setContentProtection(true);
+  });
+
+  // Note: Click handler moved to renderer process to avoid interfering with browser functionality
+
+  mainWindow.on('restore', (event) => {
+    // Keep window visible when restored
+    mainWindow.setSkipTaskbar(true);
+    // Ensure content protection is always enabled
+    setContentProtection(true);
   });
 
   // Save position when moved
@@ -110,9 +257,9 @@ function createWindow() {
     browserViews.forEach((browserView) => {
       browserView.setBounds({
         x: 0,
-        y: 100, // Space for navigation bar + tab bar
+        y: 128, // Space for window controls + tab bar + navigation bar
         width: bounds.width,
-        height: bounds.height - 100
+        height: bounds.height - 128
       });
     });
   });
@@ -124,27 +271,123 @@ function createWindow() {
   setupWebviewPermissions();
   
   // Create first tab
-  createBrowserView(0, 'https://www.google.com');
+  createBrowserView(0, '');
   
   // Create system tray
   createSystemTray();
+  
+  // Setup zoom controls
+  setupZoomControls();
+  
+  // Periodic check to ensure content protection is always enabled and browser is completely invisible
+  setInterval(() => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      // Apply stealth measures without contentProtection (which shows dark area)
+      setContentProtection(true);
+      
+      // Additional aggressive stealth measures
+      mainWindow.setAlwaysOnTop(true, 'screen-saver');
+      mainWindow.setSkipTaskbar(true);
+      mainWindow.setVisibleOnAllWorkspaces(false, { visibleOnFullScreen: false });
+      
+      // Keep browser visible to user - don't change opacity
+      
+      // Set window to be completely hidden from capture
+      mainWindow.setVisibleOnAllWorkspaces(false, { visibleOnFullScreen: false });
+      
+      // Additional stealth measures
+      mainWindow.setAlwaysOnTop(true, 'screen-saver');
+      
+    }
+  }, 500); // Check every 500ms for maximum security
 }
 
 function setupStealthMode() {
   const ses = session.defaultSession;
   
-  // Block tracking and ads
+  // Enhanced stealth mode with content protection
   ses.setPermissionRequestHandler((webContents, permission, callback) => {
     const allowedPermissions = ['notifications', 'media'];
     callback(allowedPermissions.includes(permission));
+  });
+  
+  // Block screen capture and sharing permissions
+  ses.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
+    // Block all screen capture related permissions
+    const blockedPermissions = [
+      'screen-capture',
+      'display-capture', 
+      'desktop-capture',
+      'screen-sharing',
+      'getDisplayMedia'
+    ];
+    
+    if (blockedPermissions.includes(permission)) {
+      return false;
+    }
+    
+    return true;
   });
 
   // Set user agent to mimic regular browser
   ses.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
   
-  // Content protection
+  // Enhanced content protection
   ses.setDisplayMediaRequestHandler((request, callback) => {
     callback({ video: false, audio: false });
+  });
+
+  // Block tracking scripts and ads
+  ses.webRequest.onBeforeRequest((details, callback) => {
+    const url = details.url.toLowerCase();
+    
+    // Block common tracking domains
+    const blockedDomains = [
+      'google-analytics.com',
+      'googletagmanager.com',
+      'facebook.com/tr',
+      'doubleclick.net',
+      'googlesyndication.com',
+      'amazon-adsystem.com',
+      'adsystem.amazon.com'
+    ];
+    
+    if (blockedDomains.some(domain => url.includes(domain))) {
+      callback({ cancel: true });
+      return;
+    }
+    
+    callback({});
+  });
+
+  // Block tracking headers
+  ses.webRequest.onBeforeSendHeaders((details, callback) => {
+    const requestHeaders = details.requestHeaders;
+    
+    // Check if requestHeaders is an array
+    if (Array.isArray(requestHeaders)) {
+      // Remove tracking headers
+      const blockedHeaders = [
+        'x-forwarded-for',
+        'x-real-ip',
+        'x-client-ip',
+        'cf-connecting-ip',
+        'x-cluster-client-ip'
+      ];
+      
+      const filteredHeaders = requestHeaders.filter(header => 
+        !blockedHeaders.includes(header.name.toLowerCase())
+      );
+      
+      callback({ requestHeaders: filteredHeaders });
+    } else {
+      callback({});
+    }
+  });
+
+  // Disable web security for better compatibility
+  ses.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
+    return true;
   });
 }
 
@@ -168,13 +411,42 @@ function setupWebviewPermissions() {
   });
 }
 
-function createBrowserView(tabId = 0, url = 'https://www.google.com') {
+function createBrowserView(tabId = 0, url = '') {
   const browserView = new BrowserView({
     webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true,
+      nodeIntegration: url.includes('cookie-management.html') ? true : false,
+      contextIsolation: url.includes('cookie-management.html') ? false : true,
       webSecurity: false,
-      allowRunningInsecureContent: true
+      allowRunningInsecureContent: true,
+      experimentalFeatures: true,
+      enableRemoteModule: false,
+      sandbox: false,
+      // Enhanced stealth properties
+      backgroundThrottling: false,
+      offscreen: false,
+      // Content protection
+      partition: `persist:stealth-${tabId}`,
+      // Disable features that could be used for tracking
+      disableBlinkFeatures: 'Auxclick',
+      // Additional security
+      allowDisplayingInsecureContent: true,
+      allowRunningInsecureContent: true,
+      // Performance optimizations - disable GPU to prevent crashes
+      hardwareAcceleration: false,
+      webgl: false,
+      plugins: true,
+      images: true,
+      javascript: true,
+      // Memory management
+      v8CacheOptions: 'code',
+      // Disable unnecessary features for speed
+      disableDialogs: false,
+      enableRemoteModule: false,
+      // Additional performance settings
+      preload: false,
+      // Smooth scrolling and rendering
+      enableBlinkFeatures: 'CSSColorSchemeUARendering',
+      disableBlinkFeatures: 'Auxclick,TranslateUI'
     }
   });
   
@@ -185,16 +457,50 @@ function createBrowserView(tabId = 0, url = 'https://www.google.com') {
   const bounds = mainWindow.getBounds();
   browserView.setBounds({
     x: 0,
-    y: 100, // Space for navigation bar + tab bar
+    y: 128, // Space for window controls + tab bar + navigation bar
     width: bounds.width,
-    height: bounds.height - 100
+    height: bounds.height - 128
   });
   
+  // Apply current zoom level to new BrowserView
+  if (mainWindow && mainWindow.webContents) {
+    const currentZoom = mainWindow.webContents.getZoomFactor();
+    browserView.webContents.setZoomFactor(currentZoom);
+  }
+  
   // Load URL with error handling
-  browserView.webContents.loadURL(url).catch(err => {
-    // Try loading a fallback page
-    browserView.webContents.loadURL('data:text/html,<h1>Failed to load page</h1><p>Please check your internet connection.</p>');
-  });
+  console.log('Loading URL in BrowserView:', url);
+  
+  // Check if it's a blank page request
+  if (url === '') {
+    // Load a simple blank page without custom HTML
+    browserView.webContents.loadURL('about:blank').then(() => {
+      console.log('Successfully loaded blank page');
+      // Send empty URL to renderer to show blank in address bar
+      mainWindow.webContents.send('browser-view-url', { tabId, url: '' });
+    }).catch(err => {
+      console.error('Failed to load blank page:', err);
+    });
+  } else {
+    // Handle regular URLs
+    // Ensure URL is properly formatted (but don't modify file:// URLs)
+    if (!url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('file://')) {
+      url = 'https://' + url;
+    }
+    
+    browserView.webContents.loadURL(url).then(() => {
+      console.log('Successfully loaded URL:', url);
+    }).catch(err => {
+      console.error('Failed to load URL:', url, err);
+      // Try loading Google.com as fallback
+      console.log('Trying fallback to Google.com');
+      browserView.webContents.loadURL('https://www.google.com').catch(fallbackErr => {
+        console.error('Fallback also failed:', fallbackErr);
+        // Last resort - show error page
+        browserView.webContents.loadURL('data:text/html,<h1>Failed to load page</h1><p>Please check your internet connection.</p>');
+      });
+    });
+  }
   
   // Handle navigation events
   browserView.webContents.on('did-start-loading', () => {
@@ -203,7 +509,10 @@ function createBrowserView(tabId = 0, url = 'https://www.google.com') {
   
   browserView.webContents.on('did-stop-loading', () => {
     mainWindow.webContents.send('browser-view-loading', { tabId, loading: false });
-    mainWindow.webContents.send('browser-view-url', { tabId, url: browserView.webContents.getURL() });
+    const currentUrl = browserView.webContents.getURL();
+    // Send empty string for about:blank to show blank in address bar
+    const displayUrl = currentUrl === 'about:blank' ? '' : currentUrl;
+    mainWindow.webContents.send('browser-view-url', { tabId, url: displayUrl });
   });
   
   browserView.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
@@ -218,6 +527,9 @@ function createBrowserView(tabId = 0, url = 'https://www.google.com') {
   if (tabId === currentTabId) {
     mainWindow.setBrowserView(browserView);
   }
+  
+  // Track tab usage
+  updateTabUsage(tabId);
   
   return browserView;
 }
@@ -321,6 +633,7 @@ function createSystemTray() {
       click: (menuItem) => {
         if (mainWindow) {
           mainWindow.setAlwaysOnTop(menuItem.checked);
+          store.set('alwaysOnTop', menuItem.checked);
         }
       }
     },
@@ -334,13 +647,7 @@ function createSystemTray() {
         await session.defaultSession.clearStorageData({
           storages: ['cookies']
         });
-        if (tray) {
-          tray.displayBalloon({
-            iconType: 'info',
-            title: 'StealthBrowser',
-            content: 'All cookies have been cleared.'
-          });
-        }
+        // No notification needed
       }
     },
     {
@@ -350,13 +657,7 @@ function createSystemTray() {
       label: 'About',
       type: 'normal',
       click: () => {
-        if (tray) {
-          tray.displayBalloon({
-            iconType: 'info',
-            title: 'StealthBrowser v1.0.0',
-            content: 'Privacy-focused browser with stealth capabilities.\nHotkeys: Ctrl+Shift+Arrow keys, Ctrl+Shift+.'
-          });
-        }
+        // No notification needed
       }
     },
     {
@@ -372,31 +673,24 @@ function createSystemTray() {
   tray.setContextMenu(contextMenu);
   tray.setToolTip('StealthBrowser - Privacy-focused web browser');
   
-  // Double click to show/hide
+  // Double click to show (only show, never hide automatically)
   tray.on('double-click', () => {
-    if (mainWindow.isVisible()) {
-      hideMainWindow();
-    } else {
+    if (!mainWindow.isVisible()) {
       showMainWindow();
     }
+    // Don't hide on double-click - only show if hidden
   });
   
   // Single click notification
   tray.on('click', () => {
-    if (!mainWindow.isVisible()) {
-      tray.displayBalloon({
-        iconType: 'info',
-        title: 'StealthBrowser',
-        content: 'Double-click to show browser or right-click for menu.'
-      });
-    }
+    // No notification needed
   });
 }
 
 function showMainWindow() {
   if (mainWindow) {
     mainWindow.show();
-    mainWindow.setSkipTaskbar(false);
+    mainWindow.setSkipTaskbar(true); // Keep hidden from taskbar
     mainWindow.focus();
     isHidden = false;
   }
@@ -405,7 +699,7 @@ function showMainWindow() {
 function hideMainWindow() {
   if (mainWindow) {
     mainWindow.hide();
-    mainWindow.setSkipTaskbar(true);
+    mainWindow.setSkipTaskbar(true); // Keep hidden from taskbar
     isHidden = true;
   }
 }
@@ -433,6 +727,8 @@ function registerGlobalShortcuts() {
       currentOpacity = Math.min(1.0, currentOpacity + 0.1);
       mainWindow.setOpacity(currentOpacity);
       store.set('opacity', currentOpacity);
+      
+      // No notification needed
     }
   });
 
@@ -442,6 +738,8 @@ function registerGlobalShortcuts() {
       currentOpacity = Math.max(0.1, currentOpacity - 0.1);
       mainWindow.setOpacity(currentOpacity);
       store.set('opacity', currentOpacity);
+      
+      // No notification needed
     }
   });
 
@@ -455,16 +753,464 @@ function registerGlobalShortcuts() {
       }
     }
   });
+
+  // Ctrl+Shift + T: Toggle Always on Top
+  // Toggle always on top
+  globalShortcut.register('CommandOrControl+Shift+T', () => {
+    if (mainWindow) {
+      const currentState = mainWindow.isAlwaysOnTop();
+      mainWindow.setAlwaysOnTop(!currentState);
+      store.set('alwaysOnTop', !currentState);
+    }
+  });
+
+  // Ctrl+T: Create new tab (global shortcut)
+  globalShortcut.register('CommandOrControl+T', () => {
+    if (mainWindow) {
+      mainWindow.webContents.send('create-new-tab');
+    }
+  });
+
+  // Ctrl+W: Close current tab (global shortcut)
+  globalShortcut.register('CommandOrControl+W', () => {
+    if (mainWindow) {
+      mainWindow.webContents.send('close-current-tab');
+    }
+  });
+
+  // Ctrl+Shift+`: Screen capture mode
+  globalShortcut.register('CommandOrControl+Shift+`', () => {
+    if (mainWindow) {
+      startScreenCapture();
+    }
+  });
+}
+
+// Setup zoom controls
+function setupZoomControls() {
+  if (mainWindow) {
+    // Handle zoom with Ctrl + Scroll
+    mainWindow.webContents.on('before-input-event', (event, input) => {
+      if (input.control && input.type === 'mouseWheel') {
+        event.preventDefault();
+        
+        const currentZoom = mainWindow.webContents.getZoomFactor();
+        let newZoom = currentZoom;
+        
+        if (input.wheelDeltaY > 0) {
+          // Zoom in
+          newZoom = Math.min(3.0, currentZoom + 0.1);
+        } else if (input.wheelDeltaY < 0) {
+          // Zoom out
+          newZoom = Math.max(0.25, currentZoom - 0.1);
+        }
+        
+        mainWindow.webContents.setZoomFactor(newZoom);
+        
+        // Also apply zoom to all BrowserViews
+        for (const [tabId, browserView] of browserViews) {
+          if (browserView && browserView.webContents) {
+            browserView.webContents.setZoomFactor(newZoom);
+          }
+        }
+        
+        console.log(`Zoom level set to: ${(newZoom * 100).toFixed(0)}%`);
+      }
+    });
+    
+    // Handle Ctrl + 0 to reset zoom
+    mainWindow.webContents.on('before-input-event', (event, input) => {
+      if (input.control && input.key === '0') {
+        event.preventDefault();
+        
+        const resetZoom = 1.0;
+        mainWindow.webContents.setZoomFactor(resetZoom);
+        
+        // Also reset zoom for all BrowserViews
+        for (const [tabId, browserView] of browserViews) {
+          if (browserView && browserView.webContents) {
+            browserView.webContents.setZoomFactor(resetZoom);
+          }
+        }
+        
+        console.log('Zoom level reset to: 100%');
+      }
+    });
+    
+    // Handle Ctrl + Plus to zoom in
+    mainWindow.webContents.on('before-input-event', (event, input) => {
+      if (input.control && (input.key === '+' || input.key === '=')) {
+        event.preventDefault();
+        
+        const currentZoom = mainWindow.webContents.getZoomFactor();
+        const newZoom = Math.min(3.0, currentZoom + 0.1);
+        
+        mainWindow.webContents.setZoomFactor(newZoom);
+        
+        // Also apply zoom to all BrowserViews
+        for (const [tabId, browserView] of browserViews) {
+          if (browserView && browserView.webContents) {
+            browserView.webContents.setZoomFactor(newZoom);
+          }
+        }
+        
+        console.log(`Zoom level set to: ${(newZoom * 100).toFixed(0)}%`);
+      }
+    });
+    
+    // Handle Ctrl + Minus to zoom out
+    mainWindow.webContents.on('before-input-event', (event, input) => {
+      if (input.control && input.key === '-') {
+        event.preventDefault();
+        
+        const currentZoom = mainWindow.webContents.getZoomFactor();
+        const newZoom = Math.max(0.25, currentZoom - 0.1);
+        
+        mainWindow.webContents.setZoomFactor(newZoom);
+        
+        // Also apply zoom to all BrowserViews
+        for (const [tabId, browserView] of browserViews) {
+          if (browserView && browserView.webContents) {
+            browserView.webContents.setZoomFactor(newZoom);
+          }
+        }
+        
+        console.log(`Zoom level set to: ${(newZoom * 100).toFixed(0)}%`);
+      }
+    });
+  }
+}
+
+// Cleanup function to destroy all BrowserViews
+function cleanupBrowserViews() {
+  console.log('Cleaning up all BrowserViews...');
+  browserViews.forEach((browserView, tabId) => {
+    try {
+      if (mainWindow.getBrowserView() === browserView) {
+        mainWindow.setBrowserView(null);
+      }
+      browserView.webContents.destroy();
+      // BrowserView doesn't have a destroy method, just remove it from the window
+      console.log('BrowserView cleaned up for tab:', tabId);
+    } catch (error) {
+      console.error('Error destroying BrowserView for tab', tabId, ':', error);
+    }
+  });
+  browserViews.clear();
+  tabUsageHistory.length = 0;
+}
+
+// Screen capture functionality
+let captureWindow = null;
+let isCapturing = false;
+
+function startScreenCapture() {
+  if (isCapturing) {
+    console.log('Screen capture already in progress');
+    return;
+  }
+
+  isCapturing = true;
+  console.log('Starting screen capture mode...');
+
+  // Hide the main browser window temporarily
+  if (mainWindow) {
+    mainWindow.hide();
+  }
+
+  // Create a transparent overlay window for area selection
+  captureWindow = new BrowserWindow({
+    width: 1920,
+    height: 1080,
+    frame: false,
+    transparent: true,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    closable: false,
+    focusable: true,
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false,
+      webSecurity: false
+    },
+    show: false
+  });
+
+  // Load the capture overlay HTML
+  captureWindow.loadFile(path.join(__dirname, 'capture-overlay.html'));
+
+  captureWindow.once('ready-to-show', () => {
+    // Get all displays
+    const displays = screen.getAllDisplays();
+    
+    // Find the primary display
+    const primaryDisplay = screen.getPrimaryDisplay();
+    const { x, y, width, height } = primaryDisplay.bounds;
+    
+    // Set the capture window to cover the entire primary display
+    captureWindow.setBounds({ x, y, width, height });
+    captureWindow.show();
+    captureWindow.focus();
+    
+    // Send display info to the overlay
+    captureWindow.webContents.send('display-info', {
+      x, y, width, height,
+      displays: displays.map(display => ({
+        id: display.id,
+        bounds: display.bounds,
+        isPrimary: display === primaryDisplay
+      }))
+    });
+  });
+
+  // Handle capture completion
+  captureWindow.webContents.on('ipc-message', (event, channel, data) => {
+    if (channel === 'capture-complete') {
+      handleCaptureComplete(data);
+    } else if (channel === 'capture-cancel') {
+      handleCaptureCancel();
+    }
+  });
+
+  // Handle window close
+  captureWindow.on('closed', () => {
+    captureWindow = null;
+    isCapturing = false;
+    
+    // Don't automatically show main window here - let takeScreenshot handle it
+  });
+}
+
+function handleCaptureComplete(captureData) {
+  console.log('Capture completed:', captureData);
+  
+  // Close the capture window immediately
+  if (captureWindow) {
+    captureWindow.close();
+    captureWindow = null;
+  }
+  
+  // Process the captured area
+  if (captureData && captureData.x !== undefined && captureData.y !== undefined && 
+      captureData.width !== undefined && captureData.height !== undefined) {
+    
+    // Take screenshot of the selected area
+    takeScreenshot(captureData);
+  }
+  
+  isCapturing = false;
+}
+
+function handleCaptureCancel() {
+  console.log('Capture cancelled');
+  
+  // Close the capture window
+  if (captureWindow) {
+    captureWindow.close();
+    captureWindow = null;
+  }
+  
+  // Show the main browser window
+  if (mainWindow) {
+    mainWindow.show();
+  }
+  
+  isCapturing = false;
+}
+
+async function takeScreenshot(captureData) {
+  try {
+    
+    // Get all displays
+    const displays = screen.getAllDisplays();
+    const primaryDisplay = screen.getPrimaryDisplay();
+    
+    // Get screen sources
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: { width: primaryDisplay.bounds.width, height: primaryDisplay.bounds.height }
+    });
+    
+    if (sources.length > 0) {
+      // Get the primary screen source
+      const primarySource = sources.find(source => source.display_id === primaryDisplay.id) || sources[0];
+      
+      // Get the full screen image
+      const fullImage = primarySource.thumbnail;
+      
+      // Crop to the selected area
+      const croppedImage = fullImage.crop({
+        x: captureData.x,
+        y: captureData.y,
+        width: captureData.width,
+        height: captureData.height
+      });
+      
+      // Convert to PNG buffer
+      const buffer = croppedImage.toPNG();
+      
+      // Save to clipboard
+      const image = nativeImage.createFromBuffer(buffer);
+      clipboard.writeImage(image);
+      
+      console.log('Screenshot saved to clipboard');
+      
+      // Show the main browser window
+      if (mainWindow) {
+        mainWindow.show();
+      }
+      
+    } else {
+      console.error('No screen sources available');
+      // Show the main browser window
+      if (mainWindow) {
+        mainWindow.show();
+      }
+    }
+    
+  } catch (error) {
+    console.error('Error taking screenshot:', error);
+    // Show the main browser window
+    if (mainWindow) {
+      mainWindow.show();
+    }
+  }
 }
 
 // App event handlers
 app.whenReady().then(() => {
-  // Enable webview tag
+  // Aggressive GPU disabling
+  app.commandLine.appendSwitch('disable-gpu');
+  app.commandLine.appendSwitch('disable-gpu-sandbox');
+  app.commandLine.appendSwitch('disable-gpu-compositing');
+  app.commandLine.appendSwitch('disable-3d-apis');
+  app.commandLine.appendSwitch('disable-webgl');
+  app.commandLine.appendSwitch('disable-webgl2');
+  app.commandLine.appendSwitch('disable-accelerated-2d-canvas');
+  app.commandLine.appendSwitch('disable-accelerated-jpeg-decoding');
+  app.commandLine.appendSwitch('disable-accelerated-video-decode');
+  app.commandLine.appendSwitch('disable-accelerated-video-encode');
+  app.commandLine.appendSwitch('force-gpu-rasterization', 'false');
+  app.commandLine.appendSwitch('enable-software-rasterizer');
+  
+  // Performance optimizations
   app.commandLine.appendSwitch('enable-webview');
   app.commandLine.appendSwitch('disable-web-security');
+  app.commandLine.appendSwitch('disable-background-timer-throttling');
+  app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+  app.commandLine.appendSwitch('disable-renderer-backgrounding');
+  app.commandLine.appendSwitch('disable-features', 'TranslateUI');
+  app.commandLine.appendSwitch('disable-ipc-flooding-protection');
+  app.commandLine.appendSwitch('max-active-webgl-contexts', '0');
   
-  createWindow();
+  // Additional GPU process disabling
+  app.commandLine.appendSwitch('disable-gpu-process-crash-limit');
+  app.commandLine.appendSwitch('disable-gpu-watchdog');
+  app.commandLine.appendSwitch('disable-gpu-driver-bug-workarounds');
+  app.commandLine.appendSwitch('disable-gpu-memory-buffer-video-frames');
+  
+  // Additional stealth switches to prevent screen capture and sharing
+  app.commandLine.appendSwitch('disable-features', 'VizDisplayCompositor');
+  app.commandLine.appendSwitch('disable-component-extensions-with-background-pages');
+  app.commandLine.appendSwitch('disable-default-apps');
+  app.commandLine.appendSwitch('disable-extensions');
+  app.commandLine.appendSwitch('disable-plugins');
+  app.commandLine.appendSwitch('disable-plugins-discovery');
+  app.commandLine.appendSwitch('disable-preconnect');
+  app.commandLine.appendSwitch('disable-translate');
+  app.commandLine.appendSwitch('disable-sync');
+  app.commandLine.appendSwitch('disable-background-networking');
+  app.commandLine.appendSwitch('disable-client-side-phishing-detection');
+  app.commandLine.appendSwitch('disable-component-update');
+  app.commandLine.appendSwitch('disable-domain-reliability');
+  app.commandLine.appendSwitch('disable-features', 'BlinkGenPropertyTrees');
+  app.commandLine.appendSwitch('disable-hang-monitor');
+  app.commandLine.appendSwitch('disable-prompt-on-repost');
+  
+  // Aggressive screen capture prevention switches
+  app.commandLine.appendSwitch('disable-features', 'ScreenCapture');
+  app.commandLine.appendSwitch('disable-features', 'DisplayCapture');
+  app.commandLine.appendSwitch('disable-features', 'DesktopCapture');
+  app.commandLine.appendSwitch('disable-features', 'GetDisplayMedia');
+  app.commandLine.appendSwitch('disable-features', 'ScreenSharing');
+  app.commandLine.appendSwitch('disable-features', 'WebRTC');
+  app.commandLine.appendSwitch('disable-features', 'MediaStream');
+  app.commandLine.appendSwitch('disable-features', 'CanvasCapture');
+  app.commandLine.appendSwitch('disable-features', 'VideoCapture');
+  app.commandLine.appendSwitch('disable-features', 'AudioCapture');
+  app.commandLine.appendSwitch('disable-features', 'ScreenRecording');
+  app.commandLine.appendSwitch('disable-features', 'ScreenMirroring');
+  app.commandLine.appendSwitch('disable-features', 'ScreenSharing');
+  app.commandLine.appendSwitch('disable-features', 'RemoteDesktop');
+  app.commandLine.appendSwitch('disable-features', 'ScreenCaptureAPI');
+  app.commandLine.appendSwitch('disable-features', 'DisplayMediaAPI');
+  app.commandLine.appendSwitch('disable-features', 'GetUserMedia');
+  app.commandLine.appendSwitch('disable-features', 'MediaDevices');
+  app.commandLine.appendSwitch('disable-features', 'ScreenCapturePermission');
+  app.commandLine.appendSwitch('disable-features', 'DisplayCapturePermission');
+  
+  // Set environment variables to force software rendering and prevent screen capture
+  process.env.CHROME_FLAGS = '--disable-gpu --disable-gpu-sandbox --disable-software-rasterizer --disable-features=ScreenCapture,DisplayCapture,DesktopCapture,GetDisplayMedia,ScreenSharing,WebRTC,MediaStream,CanvasCapture,VideoCapture,AudioCapture,ScreenRecording,ScreenMirroring,RemoteDesktop,ScreenCaptureAPI,DisplayMediaAPI,GetUserMedia,MediaDevices,ScreenCapturePermission,DisplayCapturePermission --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding --disable-features=TranslateUI --disable-ipc-flooding-protection --max-active-webgl-contexts=0 --disable-gpu-process-crash-limit --disable-gpu-watchdog --disable-gpu-driver-bug-workarounds --disable-gpu-memory-buffer-video-frames --disable-features=VizDisplayCompositor --disable-component-extensions-with-background-pages --disable-default-apps --disable-extensions --disable-plugins --disable-plugins-discovery --disable-preconnect --disable-translate --disable-sync --disable-background-networking --disable-client-side-phishing-detection --disable-component-update --disable-domain-reliability --disable-features=BlinkGenPropertyTrees --disable-hang-monitor --disable-prompt-on-repost';
+  process.env.ELECTRON_DISABLE_GPU = '1';
+  process.env.ELECTRON_DISABLE_SCREEN_CAPTURE = '1';
+  process.env.ELECTRON_DISABLE_SCREEN_SHARING = '1';
+  process.env.ELECTRON_DISABLE_DISPLAY_CAPTURE = '1';
+  process.env.ELECTRON_DISABLE_DESKTOP_CAPTURE = '1';
+  process.env.ELECTRON_DISABLE_GET_DISPLAY_MEDIA = '1';
+  process.env.ELECTRON_DISABLE_SCREEN_SHARING = '1';
+  process.env.ELECTRON_DISABLE_WEBRTC = '1';
+  process.env.ELECTRON_DISABLE_MEDIA_STREAM = '1';
+  process.env.ELECTRON_DISABLE_CANVAS_CAPTURE = '1';
+  process.env.ELECTRON_DISABLE_VIDEO_CAPTURE = '1';
+  process.env.ELECTRON_DISABLE_AUDIO_CAPTURE = '1';
+  process.env.ELECTRON_DISABLE_SCREEN_RECORDING = '1';
+  process.env.ELECTRON_DISABLE_SCREEN_MIRRORING = '1';
+  process.env.ELECTRON_DISABLE_REMOTE_DESKTOP = '1';
+  process.env.ELECTRON_DISABLE_WINDOW_CAPTURE = '1';
+  process.env.ELECTRON_DISABLE_DESKTOP_SHARING = '1';
+  process.env.ELECTRON_DISABLE_SCREEN_MIRRORING = '1';
+  process.env.ELECTRON_DISABLE_SCREEN_RECORDING = '1';
+  process.env.ELECTRON_DISABLE_SCREEN_SHARING = '1';
+  process.env.ELECTRON_DISABLE_DISPLAY_SHARING = '1';
+  process.env.ELECTRON_DISABLE_WINDOW_SHARING = '1';
+  process.env.ELECTRON_DISABLE_DESKTOP_MIRRORING = '1';
+  process.env.ELECTRON_DISABLE_DISPLAY_MIRRORING = '1';
+  process.env.ELECTRON_DISABLE_WINDOW_MIRRORING = '1';
+  process.env.ELECTRON_DISABLE_SCREEN_CAPTURE_API = '1';
+  process.env.ELECTRON_DISABLE_DISPLAY_CAPTURE_API = '1';
+  process.env.ELECTRON_DISABLE_DESKTOP_CAPTURE_API = '1';
+  process.env.ELECTRON_DISABLE_GET_DISPLAY_MEDIA_API = '1';
+  process.env.ELECTRON_DISABLE_SCREEN_SHARING_API = '1';
+  process.env.ELECTRON_DISABLE_WEBRTC_API = '1';
+  process.env.ELECTRON_DISABLE_MEDIA_STREAM_API = '1';
+  process.env.ELECTRON_DISABLE_CANVAS_CAPTURE_API = '1';
+  process.env.ELECTRON_DISABLE_VIDEO_CAPTURE_API = '1';
+  process.env.ELECTRON_DISABLE_AUDIO_CAPTURE_API = '1';
+  process.env.ELECTRON_DISABLE_SCREEN_RECORDING_API = '1';
+  process.env.ELECTRON_DISABLE_SCREEN_MIRRORING_API = '1';
+  process.env.ELECTRON_DISABLE_REMOTE_DESKTOP_API = '1';
+  process.env.ELECTRON_DISABLE_WINDOW_CAPTURE_API = '1';
+  process.env.ELECTRON_DISABLE_DESKTOP_SHARING_API = '1';
+  process.env.ELECTRON_DISABLE_SCREEN_MIRRORING_API = '1';
+  process.env.ELECTRON_DISABLE_SCREEN_RECORDING_API = '1';
+  process.env.ELECTRON_DISABLE_SCREEN_SHARING_API = '1';
+  process.env.ELECTRON_DISABLE_DISPLAY_SHARING_API = '1';
+  process.env.ELECTRON_DISABLE_WINDOW_SHARING_API = '1';
+  process.env.ELECTRON_DISABLE_DESKTOP_MIRRORING_API = '1';
+  process.env.ELECTRON_DISABLE_DISPLAY_MIRRORING_API = '1';
+  process.env.ELECTRON_DISABLE_WINDOW_MIRRORING_API = '1';
+  
+  // Check if app was launched at startup (hidden)
+  const isStartupLaunch = process.argv.includes('--hidden') || process.env.STARTUP_LAUNCH === 'true';
+  
+  createWindow(isStartupLaunch);
   registerGlobalShortcuts();
+
+  // No notification needed for startup
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -474,11 +1220,35 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
+  // Cleanup all BrowserViews when all windows are closed
+  cleanupBrowserViews();
+  
   // Prevent app from quitting, keep running in background
   // Auto-restart after delay
   setTimeout(() => {
-    createWindow();
-  }, 3000);
+    if (!app.isQuiting) {
+      createWindow();
+    }
+  }, 2000);
+});
+
+// Enhanced auto-restart functionality
+app.on('before-quit', (event) => {
+  if (!app.isQuiting) {
+    event.preventDefault();
+    app.isQuiting = true;
+    
+    // Cleanup all BrowserViews before restart
+    cleanupBrowserViews();
+    
+    // No notification needed
+    
+    // Restart after delay
+    setTimeout(() => {
+      app.relaunch();
+      app.exit(0);
+    }, 3000);
+  }
 });
 
 app.on('will-quit', () => {
@@ -497,9 +1267,149 @@ ipcMain.handle('get-cookies', async (event, url) => {
   return cookies;
 });
 
+ipcMain.handle('get-all-cookies', async (event) => {
+  // Get cookies from all browser sessions (all tabs)
+  let allCookies = [];
+  
+  // Get cookies from default session
+  try {
+    const defaultCookies = await session.defaultSession.cookies.get({});
+    allCookies = allCookies.concat(defaultCookies);
+  } catch (error) {
+    console.error('Error getting default session cookies:', error);
+  }
+  
+  // Get cookies from all BrowserView sessions
+  for (const [tabId, browserView] of browserViews) {
+    try {
+      const sessionCookies = await browserView.webContents.session.cookies.get({});
+      allCookies = allCookies.concat(sessionCookies);
+    } catch (error) {
+      console.error(`Error getting cookies from tab ${tabId}:`, error);
+    }
+  }
+  
+  // Remove duplicates based on name and domain
+  const uniqueCookies = allCookies.filter((cookie, index, self) => 
+    index === self.findIndex(c => c.name === cookie.name && c.domain === cookie.domain)
+  );
+  
+  return uniqueCookies;
+});
+
 ipcMain.handle('clear-cookies', async () => {
   await session.defaultSession.clearStorageData({
     storages: ['cookies']
+  });
+});
+
+ipcMain.handle('clear-cookies-for-domain', async (event, domain) => {
+  const cookies = await session.defaultSession.cookies.get({ domain });
+  for (const cookie of cookies) {
+    await session.defaultSession.cookies.remove(cookie.url, cookie.name);
+  }
+});
+
+ipcMain.handle('delete-cookie', async (event, { name, domain }) => {
+  // Delete cookie from all sessions
+  let deleted = false;
+  
+  // Try default session
+  try {
+    const defaultCookies = await session.defaultSession.cookies.get({ domain });
+    const cookieToDelete = defaultCookies.find(cookie => cookie.name === name);
+    if (cookieToDelete) {
+      const cookieUrl = cookieToDelete.url || `https://${domain}`;
+      await session.defaultSession.cookies.remove(cookieUrl, cookieToDelete.name);
+      deleted = true;
+    }
+  } catch (error) {
+    console.error('Error deleting cookie from default session:', error);
+  }
+  
+  // Try all BrowserView sessions
+  for (const [tabId, browserView] of browserViews) {
+    try {
+      const sessionCookies = await browserView.webContents.session.cookies.get({ domain });
+      const cookieToDelete = sessionCookies.find(cookie => cookie.name === name);
+      if (cookieToDelete) {
+        const cookieUrl = cookieToDelete.url || `https://${domain}`;
+        await browserView.webContents.session.cookies.remove(cookieUrl, cookieToDelete.name);
+        deleted = true;
+      }
+    } catch (error) {
+      console.error(`Error deleting cookie from tab ${tabId}:`, error);
+    }
+  }
+  
+  return deleted;
+});
+
+ipcMain.handle('clear-domain-cookies', async (event, domain) => {
+  // Clear cookies for domain from all sessions
+  let cleared = false;
+  
+  // Clear from default session
+  try {
+    const defaultCookies = await session.defaultSession.cookies.get({ domain });
+    for (const cookie of defaultCookies) {
+      const cookieUrl = cookie.url || `https://${domain}`;
+      await session.defaultSession.cookies.remove(cookieUrl, cookie.name);
+      cleared = true;
+    }
+  } catch (error) {
+    console.error('Error clearing cookies from default session:', error);
+  }
+  
+  // Clear from all BrowserView sessions
+  for (const [tabId, browserView] of browserViews) {
+    try {
+      const sessionCookies = await browserView.webContents.session.cookies.get({ domain });
+      for (const cookie of sessionCookies) {
+        const cookieUrl = cookie.url || `https://${domain}`;
+        await browserView.webContents.session.cookies.remove(cookieUrl, cookie.name);
+        cleared = true;
+      }
+    } catch (error) {
+      console.error(`Error clearing cookies from tab ${tabId}:`, error);
+    }
+  }
+  
+  return cleared;
+});
+
+ipcMain.handle('clear-all-cookies', async (event) => {
+  // Clear all cookies from all sessions
+  let cleared = false;
+  
+  // Clear from default session
+  try {
+    await session.defaultSession.clearStorageData({
+      storages: ['cookies']
+    });
+    cleared = true;
+  } catch (error) {
+    console.error('Error clearing cookies from default session:', error);
+  }
+  
+  // Clear from all BrowserView sessions
+  for (const [tabId, browserView] of browserViews) {
+    try {
+      await browserView.webContents.session.clearStorageData({
+        storages: ['cookies']
+      });
+      cleared = true;
+    } catch (error) {
+      console.error(`Error clearing cookies from tab ${tabId}:`, error);
+    }
+  }
+  
+  return cleared;
+});
+
+ipcMain.handle('clear-all-storage', async () => {
+  await session.defaultSession.clearStorageData({
+    storages: ['cookies', 'localStorage', 'sessionStorage', 'indexedDB', 'websql', 'cacheStorage']
   });
 });
 
@@ -515,9 +1425,21 @@ ipcMain.handle('set-stealth-mode', async (event, enabled) => {
 ipcMain.handle('browser-view-navigate', (event, { tabId, url }) => {
   const browserView = browserViews.get(tabId);
   if (browserView) {
-    browserView.webContents.loadURL(url).catch(err => {
-      browserView.webContents.loadURL('data:text/html,<h1>Failed to load page</h1><p>Please check your internet connection.</p>');
-    });
+    // If URL is empty, load blank page
+    if (url === '') {
+      browserView.webContents.loadURL('about:blank').then(() => {
+        console.log('Successfully loaded blank page');
+        // Send empty URL to renderer to show blank in address bar
+        mainWindow.webContents.send('browser-view-url', { tabId, url: '' });
+      }).catch(err => {
+        console.error('Failed to load blank page:', err);
+      });
+    } else {
+      // Handle regular URLs
+      browserView.webContents.loadURL(url).catch(err => {
+        browserView.webContents.loadURL('data:text/html,<h1>Failed to load page</h1><p>Please check your internet connection.</p>');
+      });
+    }
   }
 });
 
@@ -553,9 +1475,18 @@ ipcMain.handle('browser-view-can-go-forward', (event, tabId) => {
 });
 
 // Tab management handlers
-ipcMain.handle('create-tab', (event, url = 'https://www.google.com') => {
+ipcMain.handle('create-tab', (event, url = '') => {
+  console.log('Creating new tab with URL:', url);
   const newTabId = ++tabCounter;
-  createBrowserView(newTabId, url);
+  console.log('New tab ID:', newTabId);
+  
+  // Handle special cookie management URL
+  let finalUrl = url;
+  if (url === 'cookie-management') {
+    finalUrl = `file://${path.join(__dirname, 'cookie-management.html').replace(/\\/g, '/')}`;
+  }
+  
+  createBrowserView(newTabId, finalUrl);
   return newTabId;
 });
 
@@ -564,6 +1495,8 @@ ipcMain.handle('switch-tab', (event, tabId) => {
   if (browserView) {
     currentTabId = tabId;
     mainWindow.setBrowserView(browserView);
+    // Track tab usage when switching
+    updateTabUsage(tabId);
     return true;
   }
   return false;
@@ -572,20 +1505,92 @@ ipcMain.handle('switch-tab', (event, tabId) => {
 ipcMain.handle('close-tab', (event, tabId) => {
   const browserView = browserViews.get(tabId);
   if (browserView && browserViews.size > 1) {
+    console.log('Closing tab:', tabId);
+    
+    // Remove the BrowserView from the main window first
+    if (mainWindow.getBrowserView() === browserView) {
+      mainWindow.setBrowserView(null);
+    }
+    
+    // Properly destroy the BrowserView to free memory
+    try {
+      // Clear all web contents and destroy the view
+      browserView.webContents.destroy();
+      // BrowserView doesn't have a destroy method, just remove it from the window
+      console.log('BrowserView cleaned up for tab:', tabId);
+    } catch (error) {
+      console.error('Error destroying BrowserView:', error);
+    }
+    
+    // Remove from our tracking map
     browserViews.delete(tabId);
-    browserView.destroy();
+    
+    // Remove from usage history
+    const historyIndex = tabUsageHistory.indexOf(tabId);
+    if (historyIndex > -1) {
+      tabUsageHistory.splice(historyIndex, 1);
+    }
     
     // Switch to another tab if we closed the current one
     if (tabId === currentTabId) {
       const remainingTabs = Array.from(browserViews.keys());
       if (remainingTabs.length > 0) {
-        const newCurrentTab = remainingTabs[0];
-        currentTabId = newCurrentTab;
-        mainWindow.setBrowserView(browserViews.get(newCurrentTab));
-        return newCurrentTab;
+        // Use the most recently used tab instead of just the first one
+        const newCurrentTab = getMostRecentTab();
+        if (newCurrentTab && browserViews.has(newCurrentTab)) {
+          currentTabId = newCurrentTab;
+          mainWindow.setBrowserView(browserViews.get(newCurrentTab));
+          return newCurrentTab;
+        }
       }
     }
     return true;
   }
   return false;
+});
+
+// Get current tab URL
+ipcMain.handle('get-current-tab-url', (event, tabId) => {
+  const browserView = browserViews.get(tabId);
+  if (browserView) {
+    const currentUrl = browserView.webContents.getURL();
+    // Return empty string for about:blank to show blank in address bar
+    return currentUrl === 'about:blank' ? '' : currentUrl;
+  }
+  return null;
+});
+
+// Window control handlers
+ipcMain.handle('window-minimize', () => {
+  if (mainWindow) {
+    // Don't minimize - only allow hiding via hotkey
+    mainWindow.setSkipTaskbar(true);
+    // Keep window visible
+    mainWindow.show();
+  }
+});
+
+ipcMain.handle('window-maximize', () => {
+  if (mainWindow) {
+    if (mainWindow.isMaximized()) {
+      mainWindow.unmaximize();
+    } else {
+      mainWindow.maximize();
+    }
+  }
+});
+
+ipcMain.handle('window-close', () => {
+  if (mainWindow) {
+    mainWindow.hide(); // Hide instead of close
+    isHidden = true;
+  }
+});
+
+// Hide browser handler
+ipcMain.handle('hide-browser', () => {
+  if (mainWindow) {
+    mainWindow.hide();
+    isHidden = true;
+  }
 });

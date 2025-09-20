@@ -104,3 +104,24 @@ session/
 
 # Linux specific
 *.desktop
+
+# Electron builder specific
+builder-effective-config.yaml
+electron-builder.yml
+
+# Browser specific
+user-data/
+browser-data/
+cookies.json
+settings.json
+history.json
+bookmarks.json
+
+# Installer files
+*.msi
+*.appx
+*.snap
+
+# Development files
+.env.development
+.env.production

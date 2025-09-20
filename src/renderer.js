@@ -8,6 +8,7 @@ class StealthBrowser {
         this.stealthMode = true; // Always enable stealth mode
         this.currentTabId = 0;
         this.tabs = new Map();
+        this.isCreatingTab = false; // Flag to prevent duplicate tab creation
         
         this.init();
     }
@@ -15,6 +16,7 @@ class StealthBrowser {
     init() {
         this.setupEventListeners();
         this.setupBrowserViewListeners();
+        this.setupWindowControls();
         this.loadSettings();
         this.initializeFirstTab();
     }
@@ -56,6 +58,26 @@ class StealthBrowser {
                     this.handleUrlSubmit();
                 }
             });
+
+            // Select all text when clicking on address bar
+            this.urlInput.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                e.target.focus();
+                e.target.select();
+            });
+
+            // Also select all text when focusing on address bar
+            this.urlInput.addEventListener('focus', (e) => {
+                e.target.select();
+            });
+
+            // Ensure focus works on mousedown as well
+            this.urlInput.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                e.target.focus();
+            });
         }
 
         const goBtn = document.getElementById('go-btn');
@@ -77,7 +99,15 @@ class StealthBrowser {
         const cookieBtn = document.getElementById('cookie-btn');
         if (cookieBtn) {
             cookieBtn.addEventListener('click', () => {
-                this.showCookieModal();
+                this.showCookieManagement();
+            });
+        }
+
+        // Google account management
+        const googleAccountBtn = document.getElementById('google-account-btn');
+        if (googleAccountBtn) {
+            googleAccountBtn.addEventListener('click', () => {
+                this.showGoogleAccountModal();
             });
         }
 
@@ -110,6 +140,22 @@ class StealthBrowser {
                     this.switchToTab(tabId);
                 }
             });
+
+            // Handle middle mouse button (scroll wheel click) on tabs
+            tabBar.addEventListener('mousedown', (e) => {
+                if (e.button === 1) { // Middle mouse button
+                    e.preventDefault();
+                    e.stopPropagation();
+                    
+                    // Find the tab element that was clicked
+                    const tabElement = e.target.closest('.tab');
+                    if (tabElement) {
+                        const tabId = parseInt(tabElement.dataset.tab);
+                        console.log('Middle click on tab:', tabId);
+                        this.closeTab(tabId);
+                    }
+                }
+            });
         }
 
         // Listen for IPC messages from main process
@@ -120,6 +166,55 @@ class StealthBrowser {
         ipcRenderer.on('toggle-stealth', (event, enabled) => {
             this.setStealthMode(enabled);
         });
+
+        // Listen for global keyboard shortcuts from main process
+        ipcRenderer.on('create-new-tab', () => {
+            console.log('Received create-new-tab from main process');
+            this.createNewTab();
+        });
+
+        ipcRenderer.on('close-current-tab', () => {
+            console.log('Received close-current-tab from main process');
+            this.closeCurrentTab();
+        });
+
+         // Hide browser when clicking on empty areas
+         const browserContainer = document.querySelector('.browser-container');
+         if (browserContainer) {
+             browserContainer.addEventListener('click', (e) => {
+                 // Only hide if clicking on the container itself, not on interactive elements
+                 if (e.target === browserContainer) {
+                     ipcRenderer.invoke('hide-browser');
+                 }
+             });
+         }
+
+    }
+
+    setupWindowControls() {
+        // Minimize button
+        const minimizeBtn = document.getElementById('minimize-btn');
+        if (minimizeBtn) {
+            minimizeBtn.addEventListener('click', () => {
+                ipcRenderer.invoke('window-minimize');
+            });
+        }
+
+        // Maximize button
+        const maximizeBtn = document.getElementById('maximize-btn');
+        if (maximizeBtn) {
+            maximizeBtn.addEventListener('click', () => {
+                ipcRenderer.invoke('window-maximize');
+            });
+        }
+
+        // Close button
+        const closeBtn = document.getElementById('close-btn');
+        if (closeBtn) {
+            closeBtn.addEventListener('click', () => {
+                ipcRenderer.invoke('window-close');
+            });
+        }
     }
 
     setupBrowserViewListeners() {
@@ -138,9 +233,15 @@ class StealthBrowser {
         });
 
         ipcRenderer.on('browser-view-url', (event, { tabId, url }) => {
+            console.log('Received browser-view-url:', { tabId, url, currentTabId: this.currentTabId });
             if (tabId === this.currentTabId) {
-                this.urlInput.value = url;
+                // Show blank for new tabs, otherwise show the URL
+                this.urlInput.value = url === '' ? '' : url;
                 this.updateSecurityIndicator(url);
+                
+                // Show/hide blank page overlay
+                console.log('Toggling blank page overlay for URL:', url);
+                this.toggleBlankPageOverlay(url === '');
             }
         });
 
@@ -160,7 +261,12 @@ class StealthBrowser {
 
     handleUrlSubmit() {
         let url = this.urlInput.value.trim();
-        if (!url) return;
+        
+        // If URL is empty, show blank page
+        if (!url) {
+            this.navigateTo('');
+            return;
+        }
         
         url = this.autoDetectUrl(url);
         this.navigateTo(url);
@@ -218,17 +324,63 @@ class StealthBrowser {
     }
 
     showLoading() {
+        // Show loading bar with animation
         this.loadingProgress.style.width = '0%';
         this.loadingProgress.classList.add('loading');
         this.statusText.textContent = 'Loading...';
+        
+        // Add loading animation to the webview container
+        const webviewContainer = document.getElementById('webview-container');
+        if (webviewContainer) {
+            webviewContainer.classList.add('loading');
+        }
+        
+        // Add loading animation to the address bar
+        const addressBar = document.querySelector('.address-bar');
+        if (addressBar) {
+            addressBar.classList.add('loading');
+        }
+        
+        // Start progress animation
+        this.animateLoadingProgress();
     }
 
     hideLoading() {
-        this.loadingProgress.classList.remove('loading');
+        // Complete the loading animation
         this.loadingProgress.style.width = '100%';
+        this.loadingProgress.classList.remove('loading');
+        this.statusText.textContent = 'Ready';
+        
+        // Remove loading animations
+        const webviewContainer = document.getElementById('webview-container');
+        if (webviewContainer) {
+            webviewContainer.classList.remove('loading');
+        }
+        
+        const addressBar = document.querySelector('.address-bar');
+        if (addressBar) {
+            addressBar.classList.remove('loading');
+        }
+        
+        // Hide progress bar after completion
         setTimeout(() => {
             this.loadingProgress.style.width = '0%';
-        }, 200);
+        }, 300);
+    }
+
+    animateLoadingProgress() {
+        let progress = 0;
+        const interval = setInterval(() => {
+            if (this.loadingProgress.classList.contains('loading')) {
+                // Smoother progress animation
+                const increment = Math.random() * 8 + 2; // 2-10% increments
+                progress += increment;
+                if (progress > 85) progress = 85; // Don't complete until page is actually loaded
+                this.loadingProgress.style.width = progress + '%';
+            } else {
+                clearInterval(interval);
+            }
+        }, 50); // Faster updates for smoother animation
     }
 
     toggleStealthMode() {
@@ -266,7 +418,7 @@ class StealthBrowser {
 
     initializeFirstTab() {
         // Initialize the first tab (tab 0)
-        this.tabs.set(0, { id: 0, title: 'New Tab', url: 'https://www.google.com' });
+        this.tabs.set(0, { id: 0, title: 'New Tab', url: '' });
         this.currentTabId = 0;
         
         // Update the first tab element
@@ -277,14 +429,35 @@ class StealthBrowser {
     }
 
     // Tab management methods
-    async createNewTab(url = 'https://www.google.com') {
+    async createNewTab(url = '') {
+        // Prevent duplicate tab creation
+        if (this.isCreatingTab) {
+            console.log('Tab creation already in progress, skipping...');
+            return;
+        }
+        
+        this.isCreatingTab = true;
         try {
+            console.log('Creating new tab with URL:', url);
             const newTabId = await ipcRenderer.invoke('create-tab', url);
-            this.tabs.set(newTabId, { id: newTabId, title: 'New Tab', url });
+            console.log('New tab created with ID:', newTabId);
+            
+            // Set appropriate title based on URL
+            let title = 'New Tab';
+            if (url === 'cookie-management') {
+                title = 'Cookie Management';
+            }
+            
+            this.tabs.set(newTabId, { id: newTabId, title, url });
             this.createTabElement(newTabId);
-            this.switchToTab(newTabId);
+            await this.switchToTab(newTabId);
+            
+            // Ensure the URL is loaded
+            console.log('Switching to new tab and loading URL:', url);
         } catch (error) {
             console.error('Error creating new tab:', error);
+        } finally {
+            this.isCreatingTab = false;
         }
     }
 
@@ -317,36 +490,81 @@ class StealthBrowser {
                 activeTab.classList.add('active');
             }
             
+            // Update URL bar with current tab's URL
+            await this.updateUrlBarForCurrentTab();
+            
             // Update navigation buttons
             this.updateNavigationButtons();
         }
     }
 
-    async closeTab(tabId) {
-        const newCurrentTabId = await ipcRenderer.invoke('close-tab', tabId);
-        if (newCurrentTabId !== false) {
-            // Remove tab element
-            const tabElement = document.querySelector(`[data-tab="${tabId}"]`);
-            if (tabElement) {
-                tabElement.remove();
-            }
-            
-            // Switch to new current tab if needed
-            if (newCurrentTabId && newCurrentTabId !== this.currentTabId) {
-                this.switchToTab(newCurrentTabId);
-            }
-            
-            this.tabs.delete(tabId);
+     async closeTab(tabId) {
+         const newCurrentTabId = await ipcRenderer.invoke('close-tab', tabId);
+         if (newCurrentTabId !== false) {
+             // Remove tab element
+             const tabElement = document.querySelector(`[data-tab="${tabId}"]`);
+             if (tabElement) {
+                 tabElement.remove();
+             }
+             
+             // Switch to new current tab if needed
+             if (newCurrentTabId && newCurrentTabId !== this.currentTabId) {
+                 this.currentTabId = newCurrentTabId;
+                 
+                 // Update active tab
+                 document.querySelectorAll('.tab').forEach(tab => {
+                     tab.classList.remove('active');
+                 });
+                 const activeTab = document.querySelector(`[data-tab="${newCurrentTabId}"]`);
+                 if (activeTab) {
+                     activeTab.classList.add('active');
+                 }
+                 
+                 // Update URL bar with new current tab's URL
+                 await this.updateUrlBarForCurrentTab();
+                 
+                 // Update navigation buttons
+                 this.updateNavigationButtons();
+             }
+             
+             this.tabs.delete(tabId);
+         }
+     }
+
+    async closeCurrentTab() {
+        // Check if this is the last tab
+        if (this.tabs.size <= 1) {
+            // If it's the last tab, just hide the window (don't create new tab automatically)
+            await ipcRenderer.invoke('hide-browser');
+        } else {
+            // Close the current tab normally
+            await this.closeTab(this.currentTabId);
         }
     }
 
     // Cookie management methods
-    showCookieModal() {
-        const modal = document.getElementById('cookie-modal');
-        if (modal) {
-            modal.style.display = 'block';
-            this.setupCookieModalEvents();
+    async showCookieManagement() {
+        // Check if cookie management tab is already open
+        const cookieManagementTab = this.findCookieManagementTab();
+        if (cookieManagementTab) {
+            // Switch to existing cookie management tab
+            await this.switchToTab(cookieManagementTab.id);
+            return;
         }
+        
+        // Create a new tab for cookie management using special URL
+        await this.createNewTab('cookie-management');
+    }
+    
+    findCookieManagementTab() {
+        // Look for a tab that has the cookie management URL or title
+        for (const [tabId, tab] of this.tabs) {
+            if ((tab.url && tab.url.includes('cookie-management.html')) || 
+                (tab.title && tab.title === 'Cookie Management')) {
+                return tab;
+            }
+        }
+        return null;
     }
 
     hideCookieModal() {
@@ -357,10 +575,18 @@ class StealthBrowser {
     }
 
     setupCookieModalEvents() {
+        console.log('Setting up cookie modal events');
+        
         // Close modal button
         const closeBtn = document.getElementById('cookie-modal-close');
         if (closeBtn) {
-            closeBtn.onclick = () => this.hideCookieModal();
+            closeBtn.onclick = () => {
+                console.log('Close button clicked');
+                this.hideCookieModal();
+            };
+            console.log('Close button event attached');
+        } else {
+            console.log('Close button not found');
         }
 
         // Close modal when clicking outside
@@ -368,78 +594,379 @@ class StealthBrowser {
         if (modal) {
             modal.onclick = (e) => {
                 if (e.target === modal) {
+                    console.log('Modal background clicked');
                     this.hideCookieModal();
                 }
             };
         }
 
-        // View cookies button
-        const viewBtn = document.getElementById('view-cookies-btn');
-        if (viewBtn) {
-            viewBtn.onclick = () => this.viewCookies();
+        // Refresh cookies button
+        const refreshBtn = document.getElementById('refresh-cookies-btn');
+        if (refreshBtn) {
+            refreshBtn.onclick = () => {
+                console.log('Refresh button clicked');
+                this.refreshCookies();
+            };
+            console.log('Refresh button event attached');
+        } else {
+            console.log('Refresh button not found');
         }
 
-        // Clear cookies button
-        const clearBtn = document.getElementById('clear-cookies-btn');
-        if (clearBtn) {
-            clearBtn.onclick = () => this.clearAllCookies();
+        // Clear all cookies button
+        const clearAllBtn = document.getElementById('clear-all-cookies-btn');
+        if (clearAllBtn) {
+            clearAllBtn.onclick = () => {
+                console.log('Clear all button clicked');
+                this.clearAllCookies();
+            };
+            console.log('Clear all button event attached');
+        } else {
+            console.log('Clear all button not found');
         }
+
+        // Search functionality
+        const searchInput = document.getElementById('cookie-search');
+        if (searchInput) {
+            searchInput.addEventListener('input', (e) => {
+                console.log('Search input changed:', e.target.value);
+                this.filterCookies(e.target.value);
+            });
+            console.log('Search input event attached');
+        } else {
+            console.log('Search input not found');
+        }
+
+        // Load cookies when modal opens
+        console.log('Loading cookies...');
+        this.refreshCookies();
     }
 
-    async viewCookies() {
+    async refreshCookies() {
         try {
-            const currentUrl = this.urlInput.value;
-            if (!currentUrl) {
-                alert('No URL available to view cookies');
-                return;
-            }
-
-            const cookies = await ipcRenderer.invoke('get-cookies', currentUrl);
-            this.displayCookies(cookies);
+            const cookies = await ipcRenderer.invoke('get-all-cookies');
+            this.displayCookiesByDomain(cookies);
+            this.updateCookieStats(cookies);
         } catch (error) {
-            console.error('Error viewing cookies:', error);
-            alert('Error loading cookies');
+            console.error('Error fetching cookies:', error);
         }
     }
 
-    displayCookies(cookies) {
-        const cookieList = document.getElementById('cookie-list');
-        if (!cookieList) return;
+    displayCookiesByDomain(cookies) {
+        const cookieDomains = document.getElementById('cookie-domains');
+        if (!cookieDomains) return;
 
-        if (cookies.length === 0) {
-            cookieList.innerHTML = '<p style="color: #888; text-align: center; padding: 20px;">No cookies found for this site</p>';
+        if (!cookies || cookies.length === 0) {
+            cookieDomains.innerHTML = '<div style="color: #9ca3af; text-align: center; padding: 40px;">No cookies found</div>';
             return;
         }
 
-        cookieList.innerHTML = cookies.map(cookie => `
-            <div class="cookie-item">
-                <div class="cookie-info">
-                    <div class="cookie-name">${cookie.name}</div>
-                    <div class="cookie-domain">${cookie.domain}</div>
-                    <div class="cookie-value">${cookie.value}</div>
+        // Group cookies by domain
+        const domainGroups = {};
+        cookies.forEach(cookie => {
+            const domain = cookie.domain || 'Unknown';
+            if (!domainGroups[domain]) {
+                domainGroups[domain] = [];
+            }
+            domainGroups[domain].push(cookie);
+        });
+
+        let html = '';
+        Object.keys(domainGroups).sort().forEach(domain => {
+            const domainCookies = domainGroups[domain];
+            const domainId = domain.replace(/[^a-zA-Z0-9]/g, '_');
+            
+            html += `
+                <div class="domain-group" data-domain="${domain}">
+                    <div class="domain-header" onclick="toggleDomain('${domainId}')">
+                        <div class="domain-info">
+                            <span class="domain-name">${domain}</span>
+                            <span class="domain-count">${domainCookies.length} cookies</span>
+                        </div>
+                        <div class="domain-actions">
+                            <button class="domain-delete-btn" onclick="event.stopPropagation(); clearDomainCookies('${domain}')">
+                                Clear Domain
+                            </button>
+                            <button class="domain-toggle" id="toggle-${domainId}">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="domain-cookies" id="cookies-${domainId}">
+                        ${domainCookies.map(cookie => `
+                            <div class="cookie-item">
+                                <div class="cookie-info">
+                                    <div class="cookie-name">${cookie.name}</div>
+                                    <div class="cookie-value">${cookie.value}</div>
+                                </div>
+                                <div class="cookie-actions">
+                                    <button class="cookie-delete-btn" onclick="deleteCookie('${cookie.name}', '${cookie.domain}')">
+                                        Delete
+                                    </button>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
                 </div>
-                <div class="cookie-actions">
-                    <button class="cookie-delete" onclick="this.deleteCookie('${cookie.name}', '${cookie.domain}')">Delete</button>
-                </div>
-            </div>
-        `).join('');
+            `;
+        });
+
+        cookieDomains.innerHTML = html;
+    }
+
+    updateCookieStats(cookies) {
+        const totalCookies = document.getElementById('total-cookies');
+        const totalDomains = document.getElementById('total-domains');
+        
+        if (totalCookies) {
+            totalCookies.textContent = cookies ? cookies.length : 0;
+        }
+        
+        if (totalDomains) {
+            const domains = new Set();
+            if (cookies) {
+                cookies.forEach(cookie => {
+                    domains.add(cookie.domain || 'Unknown');
+                });
+            }
+            totalDomains.textContent = domains.size;
+        }
+    }
+
+    filterCookies(searchTerm) {
+        const domainGroups = document.querySelectorAll('.domain-group');
+        const searchLower = searchTerm.toLowerCase();
+
+        domainGroups.forEach(group => {
+            const domainName = group.querySelector('.domain-name').textContent.toLowerCase();
+            const cookies = group.querySelectorAll('.cookie-item');
+            let hasVisibleCookies = false;
+
+            cookies.forEach(cookie => {
+                const cookieName = cookie.querySelector('.cookie-name').textContent.toLowerCase();
+                const cookieValue = cookie.querySelector('.cookie-value').textContent.toLowerCase();
+                
+                const matches = domainName.includes(searchLower) || 
+                              cookieName.includes(searchLower) || 
+                              cookieValue.includes(searchLower);
+                
+                cookie.style.display = matches ? 'flex' : 'none';
+                if (matches) hasVisibleCookies = true;
+            });
+
+            group.style.display = hasVisibleCookies || domainName.includes(searchLower) ? 'block' : 'none';
+        });
     }
 
     async clearAllCookies() {
-        if (confirm('Are you sure you want to clear all cookies? This action cannot be undone.')) {
+        if (confirm('Are you sure you want to clear ALL cookies? This action cannot be undone.')) {
             try {
-                await ipcRenderer.invoke('clear-cookies');
-                alert('All cookies have been cleared');
-                this.hideCookieModal();
+                await ipcRenderer.invoke('clear-all-cookies');
+                this.refreshCookies();
             } catch (error) {
                 console.error('Error clearing cookies:', error);
-                alert('Error clearing cookies');
             }
+        }
+    }
+
+    // Google Account Management Methods
+    showGoogleAccountModal() {
+        const modal = document.getElementById('google-account-modal');
+        if (modal) {
+            modal.style.display = 'block';
+            this.setupGoogleAccountEventListeners();
+        }
+    }
+
+    hideGoogleAccountModal() {
+        const modal = document.getElementById('google-account-modal');
+        if (modal) {
+            modal.style.display = 'none';
+        }
+    }
+
+    setupGoogleAccountEventListeners() {
+        // Close modal
+        const closeBtn = document.getElementById('google-account-modal-close');
+        if (closeBtn) {
+            closeBtn.onclick = () => this.hideGoogleAccountModal();
+        }
+
+        // Google sign in
+        const signinBtn = document.getElementById('google-signin-btn');
+        if (signinBtn) {
+            signinBtn.onclick = () => this.signInWithGoogle();
+        }
+
+        // Google sign out
+        const signoutBtn = document.getElementById('google-signout-btn');
+        if (signoutBtn) {
+            signoutBtn.onclick = () => this.signOutFromGoogle();
+        }
+
+        // Service buttons
+        const serviceBtns = document.querySelectorAll('.service-btn');
+        serviceBtns.forEach(btn => {
+            btn.onclick = () => {
+                const url = btn.dataset.url;
+                if (url) {
+                    this.navigateTo(url);
+                    this.hideGoogleAccountModal();
+                }
+            };
+        });
+
+        // Close modal when clicking outside
+        const modal = document.getElementById('google-account-modal');
+        if (modal) {
+            modal.onclick = (e) => {
+                if (e.target === modal) {
+                    this.hideGoogleAccountModal();
+                }
+            };
+        }
+    }
+
+    async signInWithGoogle() {
+        try {
+            // Navigate to Google sign-in page
+            this.navigateTo('https://accounts.google.com/signin');
+            this.hideGoogleAccountModal();
+            
+            // Show success message
+            this.statusText.textContent = 'Redirecting to Google Sign-in...';
+        } catch (error) {
+            console.error('Error signing in with Google:', error);
+            alert('Error signing in with Google');
+        }
+    }
+
+    async signOutFromGoogle() {
+        try {
+            // Clear Google cookies and session data
+            await ipcRenderer.invoke('clear-cookies-for-domain', 'google.com');
+            await ipcRenderer.invoke('clear-cookies-for-domain', 'accounts.google.com');
+            
+            // Navigate to Google sign-out
+            this.navigateTo('https://accounts.google.com/logout');
+            
+            // Update UI
+            this.updateGoogleAccountUI(false);
+            
+            alert('Signed out from Google');
+        } catch (error) {
+            console.error('Error signing out from Google:', error);
+            alert('Error signing out from Google');
+        }
+    }
+
+    updateGoogleAccountUI(isSignedIn, userInfo = null) {
+        const signinBtn = document.getElementById('google-signin-btn');
+        const signoutBtn = document.getElementById('google-signout-btn');
+        const accountInfo = document.getElementById('account-info');
+        
+        if (isSignedIn && userInfo) {
+            signinBtn.style.display = 'none';
+            signoutBtn.style.display = 'block';
+            accountInfo.style.display = 'block';
+            
+            // Update account info
+            const avatar = document.getElementById('account-avatar');
+            const name = document.getElementById('account-name');
+            const email = document.getElementById('account-email');
+            
+            if (avatar && userInfo.picture) {
+                avatar.src = userInfo.picture;
+            }
+            if (name && userInfo.name) {
+                name.textContent = userInfo.name;
+            }
+            if (email && userInfo.email) {
+                email.textContent = userInfo.email;
+            }
+        } else {
+            signinBtn.style.display = 'block';
+            signoutBtn.style.display = 'none';
+            accountInfo.style.display = 'none';
+        }
+    }
+
+    // Update URL bar for current tab
+    async updateUrlBarForCurrentTab() {
+        try {
+            const currentUrl = await ipcRenderer.invoke('get-current-tab-url', this.currentTabId);
+            if (this.urlInput) {
+                // Show blank for new tabs, otherwise show the URL
+                this.urlInput.value = (currentUrl === '') ? '' : currentUrl;
+                this.updateSecurityIndicator(currentUrl);
+                
+                // Show/hide blank page overlay
+                this.toggleBlankPageOverlay(currentUrl === '');
+            }
+        } catch (error) {
+            console.error('Error getting current tab URL:', error);
+        }
+    }
+
+    // Toggle blank page overlay
+    toggleBlankPageOverlay(show) {
+        const overlay = document.getElementById('blank-page-overlay');
+        if (overlay) {
+            overlay.style.display = show ? 'flex' : 'none';
+            console.log('Blank page overlay toggled:', show ? 'shown' : 'hidden');
+        } else {
+            console.log('Blank page overlay element not found');
         }
     }
 }
 
+// Global functions for cookie management
+window.toggleDomain = function(domainId) {
+    console.log('toggleDomain called with:', domainId);
+    const toggle = document.getElementById(`toggle-${domainId}`);
+    const cookies = document.getElementById(`cookies-${domainId}`);
+    
+    if (!toggle || !cookies) {
+        console.log('Toggle or cookies element not found');
+        return;
+    }
+    
+    if (cookies.classList.contains('expanded')) {
+        cookies.classList.remove('expanded');
+        toggle.classList.remove('expanded');
+        console.log('Domain collapsed');
+    } else {
+        cookies.classList.add('expanded');
+        toggle.classList.add('expanded');
+        console.log('Domain expanded');
+    }
+};
+
+window.deleteCookie = async function(name, domain) {
+    console.log('deleteCookie called:', name, domain);
+    try {
+        await ipcRenderer.invoke('delete-cookie', { name, domain });
+        window.stealthBrowser.refreshCookies();
+    } catch (error) {
+        console.error('Error deleting cookie:', error);
+    }
+};
+
+window.clearDomainCookies = async function(domain) {
+    console.log('clearDomainCookies called:', domain);
+    if (confirm(`Are you sure you want to clear all cookies for ${domain}?`)) {
+        try {
+            await ipcRenderer.invoke('clear-cookies-for-domain', domain);
+            window.stealthBrowser.refreshCookies();
+        } catch (error) {
+            console.error('Error clearing domain cookies:', error);
+        }
+    }
+};
+
 // Initialize the browser when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
-    new StealthBrowser();
+    window.stealthBrowser = new StealthBrowser();
+    window.stealthBrowser.init();
 });

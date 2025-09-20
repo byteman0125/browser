@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Cookie Management - StealthBrowser</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #ffffff;
+            line-height: 1.6;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #333;
+        }
+        .header h1 {
+            margin: 0;
+            color: #8b5cf6;
+        }
+        .stats {
+            display: flex;
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+        .pagination {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 10px;
+            margin: 20px 0;
+        }
+        .pagination button {
+            background: #2a2a2a;
+            border: 1px solid #333;
+            border-radius: 6px;
+            padding: 8px 12px;
+            color: white;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        .pagination button:hover {
+            background: #333;
+            border-color: #8b5cf6;
+        }
+        .pagination button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .pagination button.active {
+            background: #8b5cf6;
+            border-color: #8b5cf6;
+        }
+        .pagination-info {
+            color: #9ca3af;
+            font-size: 14px;
+        }
+        .view-options {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            align-items: center;
+        }
+        .view-toggle {
+            background: #2a2a2a;
+            border: 1px solid #333;
+            border-radius: 6px;
+            padding: 8px 12px;
+            color: white;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 12px;
+        }
+        .view-toggle.active {
+            background: #8b5cf6;
+            border-color: #8b5cf6;
+        }
+        .view-toggle:hover {
+            background: #333;
+        }
+        .items-per-page {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: #9ca3af;
+            font-size: 14px;
+        }
+        .items-per-page select {
+            background: #2a2a2a;
+            border: 1px solid #333;
+            border-radius: 6px;
+            padding: 6px 10px;
+            color: white;
+            font-size: 14px;
+        }
+        .items-per-page select:focus {
+            outline: none;
+            border-color: #8b5cf6;
+        }
+        .stat-item {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 12px;
+            text-align: center;
+            min-width: 120px;
+        }
+        .stat-number {
+            display: block;
+            font-size: 24px;
+            font-weight: bold;
+            color: #8b5cf6;
+            margin-bottom: 5px;
+        }
+        .stat-label {
+            color: #9ca3af;
+            font-size: 14px;
+        }
+        .controls {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }
+        .btn {
+            background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+            border: none;
+            border-radius: 8px;
+            padding: 12px 20px;
+            color: white;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3);
+        }
+        .btn.danger {
+            background: linear-gradient(135deg, #ef4444, #dc2626);
+        }
+        .search-section {
+            margin-bottom: 30px;
+        }
+        .search-input {
+            width: 100%;
+            max-width: 400px;
+            padding: 12px 16px;
+            border: 1px solid #333;
+            border-radius: 8px;
+            background: #2a2a2a;
+            color: white;
+            font-size: 14px;
+        }
+        .search-input:focus {
+            outline: none;
+            border-color: #8b5cf6;
+            box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
+        }
+        .domain-group {
+            background: #2a2a2a;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            overflow: hidden;
+        }
+        .domain-header {
+            padding: 12px 20px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #333;
+            transition: background 0.3s ease;
+        }
+        .domain-header:hover {
+            background: #333;
+        }
+        .domain-info {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+        .domain-name {
+            font-weight: 600;
+            color: #ffffff;
+            font-size: 14px;
+        }
+        .domain-count {
+            color: #9ca3af;
+            font-size: 12px;
+        }
+        .domain-actions {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        .domain-toggle {
+            background: none;
+            border: none;
+            color: #9ca3af;
+            cursor: pointer;
+            padding: 5px;
+            border-radius: 4px;
+            transition: all 0.3s ease;
+        }
+        .domain-toggle:hover {
+            background: #333;
+            color: white;
+        }
+        .domain-toggle.expanded {
+            transform: rotate(180deg);
+        }
+        .domain-cookies {
+            display: none;
+            padding: 0 20px 12px;
+        }
+        .domain-cookies.expanded {
+            display: block;
+        }
+        .cookie-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+            border-bottom: 1px solid #333;
+            font-size: 13px;
+        }
+        .cookie-item:last-child {
+            border-bottom: none;
+        }
+        .cookie-info {
+            flex: 1;
+            min-width: 0;
+        }
+        .cookie-name {
+            font-weight: 600;
+            color: #ffffff;
+            margin-bottom: 2px;
+            font-size: 13px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .cookie-value {
+            color: #9ca3af;
+            font-size: 11px;
+            word-break: break-all;
+            max-height: 2.2em;
+            overflow: hidden;
+            line-height: 1.1;
+        }
+        .cookie-actions {
+            display: flex;
+            gap: 5px;
+            flex-shrink: 0;
+        }
+        .delete-btn {
+            background: #ef4444;
+            border: none;
+            border-radius: 4px;
+            padding: 4px 8px;
+            color: white;
+            cursor: pointer;
+            font-size: 10px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+        .delete-btn:hover {
+            background: #dc2626;
+            transform: translateY(-1px);
+        }
+        .clear-domain-btn {
+            background: #f59e0b;
+            border: none;
+            border-radius: 6px;
+            padding: 8px 12px;
+            color: white;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+        .clear-domain-btn:hover {
+            background: #d97706;
+            transform: translateY(-1px);
+        }
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #9ca3af;
+        }
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #8b5cf6;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🍪 Cookie Management</h1>
+        <div class="controls">
+            <button class="btn" onclick="refreshCookies()">🔄 Refresh</button>
+            <button class="btn danger" onclick="clearAllCookies()">🗑️ Clear All</button>
+        </div>
+    </div>
+    
+    <div class="stats">
+        <div class="stat-item">
+            <span class="stat-number" id="total-cookies">0</span>
+            <span class="stat-label">Total Cookies</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-number" id="total-domains">0</span>
+            <span class="stat-label">Domains</span>
+        </div>
+    </div>
+    
+    <div class="search-section">
+        <input type="text" class="search-input" id="cookie-search" placeholder="Search domains or cookies...">
+    </div>
+    
+    <div class="view-options">
+        <button class="view-toggle active" id="domain-view">Domain View</button>
+        <button class="view-toggle" id="list-view">List View</button>
+        <div class="items-per-page">
+            <span>Show:</span>
+            <select id="items-per-page">
+                <option value="10">10 per page</option>
+                <option value="25" selected>25 per page</option>
+                <option value="50">50 per page</option>
+                <option value="100">100 per page</option>
+            </select>
+        </div>
+    </div>
+    
+    <div id="cookie-domains" class="cookie-domains">
+        <div class="loading">Loading cookies...</div>
+    </div>
+    
+    <div class="pagination" id="pagination" style="display: none;">
+        <button id="prev-page" disabled>← Previous</button>
+        <div id="page-numbers"></div>
+        <button id="next-page" disabled>Next →</button>
+        <div class="pagination-info" id="pagination-info"></div>
+    </div>
+    
+    <script>
+        const { ipcRenderer } = require('electron');
+        
+        let allCookies = [];
+        let filteredCookies = [];
+        let currentPage = 1;
+        let itemsPerPage = 25;
+        let currentView = 'domain'; // 'domain' or 'list'
+        
+        async function refreshCookies() {
+            try {
+                document.getElementById('cookie-domains').innerHTML = '<div class="loading">Loading cookies...</div>';
+                allCookies = await ipcRenderer.invoke('get-all-cookies');
+                filteredCookies = [...allCookies];
+                currentPage = 1;
+                displayCookies();
+                updateCookieStats(allCookies);
+                setupEventListeners();
+            } catch (error) {
+                console.error('Error fetching cookies:', error);
+                document.getElementById('cookie-domains').innerHTML = '<div class="empty-state">Error loading cookies</div>';
+            }
+        }
+        
+        function displayCookies() {
+            const cookieDomains = document.getElementById('cookie-domains');
+            if (!filteredCookies || filteredCookies.length === 0) {
+                cookieDomains.innerHTML = '<div class="empty-state">No cookies found</div>';
+                document.getElementById('pagination').style.display = 'none';
+                return;
+            }
+            
+            if (currentView === 'domain') {
+                displayDomainView();
+            } else {
+                displayListView();
+            }
+            
+            updatePagination();
+        }
+        
+        function displayDomainView() {
+            const cookieDomains = document.getElementById('cookie-domains');
+            const domainGroups = {};
+            
+            // Group cookies by domain
+            filteredCookies.forEach(cookie => {
+                const domain = cookie.domain || 'Unknown';
+                if (!domainGroups[domain]) {
+                    domainGroups[domain] = [];
+                }
+                domainGroups[domain].push(cookie);
+            });
+            
+            const domains = Object.keys(domainGroups).sort();
+            const startIndex = (currentPage - 1) * itemsPerPage;
+            const endIndex = startIndex + itemsPerPage;
+            const paginatedDomains = domains.slice(startIndex, endIndex);
+            
+            let html = '';
+            paginatedDomains.forEach(domain => {
+                const domainCookies = domainGroups[domain];
+                const domainId = domain.replace(/[^a-zA-Z0-9]/g, '_');
+                
+                html += `
+                    <div class="domain-group" data-domain="${domain}">
+                        <div class="domain-header" onclick="toggleDomain('${domainId}')">
+                            <div class="domain-info">
+                                <span class="domain-name">${domain}</span>
+                                <span class="domain-count">${domainCookies.length} cookies</span>
+                            </div>
+                            <div class="domain-actions">
+                                <button class="clear-domain-btn" onclick="event.stopPropagation(); clearDomainCookies('${domain}')">
+                                    Clear Domain
+                                </button>
+                                <button class="domain-toggle" id="toggle-${domainId}">
+                                    <span>▼</span>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="domain-cookies" id="cookies-${domainId}">
+                            ${domainCookies.map(cookie => `
+                                <div class="cookie-item">
+                                    <div class="cookie-info">
+                                        <div class="cookie-name">${cookie.name}</div>
+                                        <div class="cookie-value">${cookie.value}</div>
+                                    </div>
+                                    <div class="cookie-actions">
+                                        <button class="delete-btn" onclick="deleteCookie('${cookie.name}', '${cookie.domain}')">
+                                            Delete
+                                        </button>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            });
+            cookieDomains.innerHTML = html;
+        }
+        
+        function displayListView() {
+            const cookieDomains = document.getElementById('cookie-domains');
+            const startIndex = (currentPage - 1) * itemsPerPage;
+            const endIndex = startIndex + itemsPerPage;
+            const paginatedCookies = filteredCookies.slice(startIndex, endIndex);
+            
+            let html = '';
+            paginatedCookies.forEach(cookie => {
+                html += `
+                    <div class="cookie-item" style="margin-bottom: 6px; padding: 8px 12px; background: #2a2a2a; border-radius: 6px;">
+                        <div class="cookie-info">
+                            <div class="cookie-name">${cookie.name}</div>
+                            <div class="cookie-value">${cookie.value}</div>
+                            <div style="color: #9ca3af; font-size: 10px; margin-top: 2px;">Domain: ${cookie.domain || 'Unknown'}</div>
+                        </div>
+                        <div class="cookie-actions">
+                            <button class="delete-btn" onclick="deleteCookie('${cookie.name}', '${cookie.domain}')">
+                                Delete
+                            </button>
+                        </div>
+                    </div>
+                `;
+            });
+            cookieDomains.innerHTML = html;
+        }
+        
+        function updateCookieStats(cookies) {
+            const totalCookies = cookies.length;
+            const totalDomains = new Set(cookies.map(cookie => cookie.domain)).size;
+            
+            document.getElementById('total-cookies').textContent = totalCookies;
+            document.getElementById('total-domains').textContent = totalDomains;
+        }
+        
+        function toggleDomain(domainId) {
+            const cookiesDiv = document.getElementById('cookies-' + domainId);
+            const toggleBtn = document.getElementById('toggle-' + domainId);
+            
+            if (cookiesDiv.classList.contains('expanded')) {
+                cookiesDiv.classList.remove('expanded');
+                toggleBtn.classList.remove('expanded');
+            } else {
+                cookiesDiv.classList.add('expanded');
+                toggleBtn.classList.add('expanded');
+            }
+        }
+        
+        async function deleteCookie(name, domain) {
+            try {
+                await ipcRenderer.invoke('delete-cookie', { name, domain });
+                await refreshCookies();
+            } catch (error) {
+                console.error('Error deleting cookie:', error);
+            }
+        }
+        
+        async function clearDomainCookies(domain) {
+            try {
+                await ipcRenderer.invoke('clear-domain-cookies', domain);
+                await refreshCookies();
+            } catch (error) {
+                console.error('Error clearing domain cookies:', error);
+            }
+        }
+        
+        async function clearAllCookies() {
+            if (confirm('Are you sure you want to clear all cookies? This action cannot be undone.')) {
+                try {
+                    await ipcRenderer.invoke('clear-all-cookies');
+                    await refreshCookies();
+                } catch (error) {
+                    console.error('Error clearing all cookies:', error);
+                }
+            }
+        }
+        
+        function updatePagination() {
+            const totalItems = currentView === 'domain' ? 
+                new Set(filteredCookies.map(cookie => cookie.domain)).size : 
+                filteredCookies.length;
+            const totalPages = Math.ceil(totalItems / itemsPerPage);
+            
+            const pagination = document.getElementById('pagination');
+            const prevBtn = document.getElementById('prev-page');
+            const nextBtn = document.getElementById('next-page');
+            const pageNumbers = document.getElementById('page-numbers');
+            const paginationInfo = document.getElementById('pagination-info');
+            
+            if (totalPages <= 1) {
+                pagination.style.display = 'none';
+                return;
+            }
+            
+            pagination.style.display = 'flex';
+            
+            // Update prev/next buttons
+            prevBtn.disabled = currentPage === 1;
+            nextBtn.disabled = currentPage === totalPages;
+            
+            // Update page numbers
+            pageNumbers.innerHTML = '';
+            const startPage = Math.max(1, currentPage - 2);
+            const endPage = Math.min(totalPages, currentPage + 2);
+            
+            for (let i = startPage; i <= endPage; i++) {
+                const pageBtn = document.createElement('button');
+                pageBtn.textContent = i;
+                pageBtn.className = i === currentPage ? 'active' : '';
+                pageBtn.onclick = () => {
+                    currentPage = i;
+                    displayCookies();
+                };
+                pageNumbers.appendChild(pageBtn);
+            }
+            
+            // Update pagination info
+            const startItem = (currentPage - 1) * itemsPerPage + 1;
+            const endItem = Math.min(currentPage * itemsPerPage, totalItems);
+            paginationInfo.textContent = `Showing ${startItem}-${endItem} of ${totalItems}`;
+        }
+        
+        function setupEventListeners() {
+            // View toggle
+            document.getElementById('domain-view').onclick = () => {
+                currentView = 'domain';
+                currentPage = 1;
+                document.getElementById('domain-view').classList.add('active');
+                document.getElementById('list-view').classList.remove('active');
+                displayCookies();
+            };
+            
+            document.getElementById('list-view').onclick = () => {
+                currentView = 'list';
+                currentPage = 1;
+                document.getElementById('list-view').classList.add('active');
+                document.getElementById('domain-view').classList.remove('active');
+                displayCookies();
+            };
+            
+            // Items per page
+            document.getElementById('items-per-page').onchange = (e) => {
+                itemsPerPage = parseInt(e.target.value);
+                currentPage = 1;
+                displayCookies();
+            };
+            
+            // Pagination
+            document.getElementById('prev-page').onclick = () => {
+                if (currentPage > 1) {
+                    currentPage--;
+                    displayCookies();
+                }
+            };
+            
+            document.getElementById('next-page').onclick = () => {
+                const totalItems = currentView === 'domain' ? 
+                    new Set(filteredCookies.map(cookie => cookie.domain)).size : 
+                    filteredCookies.length;
+                const totalPages = Math.ceil(totalItems / itemsPerPage);
+                
+                if (currentPage < totalPages) {
+                    currentPage++;
+                    displayCookies();
+                }
+            };
+            
+            // Search functionality
+            document.getElementById('cookie-search').oninput = (e) => {
+                const searchTerm = e.target.value.toLowerCase();
+                if (searchTerm === '') {
+                    filteredCookies = [...allCookies];
+                } else {
+                    filteredCookies = allCookies.filter(cookie => 
+                        cookie.name.toLowerCase().includes(searchTerm) ||
+                        cookie.domain.toLowerCase().includes(searchTerm) ||
+                        cookie.value.toLowerCase().includes(searchTerm)
+                    );
+                }
+                currentPage = 1;
+                displayCookies();
+            };
+        }
+        
+        // Load cookies on page load
+        refreshCookies();
+    </script>
+</body>
+</html>
