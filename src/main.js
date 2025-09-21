@@ -203,8 +203,8 @@ function setContentProtection(enabled) {
       // CRITICAL: Enable content protection to make window invisible to screen capture
       mainWindow.setContentProtection(true);
       
-      // Additional stealth: make window appear as desktop element
-      mainWindow.setOpacity(1.0); // Keep visible to user
+      // DON'T override user's opacity setting - keep current opacity
+      // mainWindow.setOpacity(1.0); // REMOVED - this was overriding user settings
       
       // Advanced stealth measures
       try {
@@ -262,7 +262,6 @@ function createWindow(startHidden = false) {
     resizable: false, // Prevent resizing
     closable: false, // Prevent closing (we handle this ourselves)
     // Additional stealth properties
-    transparent: false, // Keep normal transparency for user visibility
     hasShadow: false, // Remove window shadow
     thickFrame: false, // Remove thick frame
     titleBarStyle: 'hidden', // Hide title bar completely
@@ -421,6 +420,9 @@ function createWindow(startHidden = false) {
           
           // Only apply content protection if stealth mode is enabled
           setContentProtection(true);
+          
+          // DON'T override user's opacity - keep their setting
+          // The stealth protection should not interfere with transparency
           
         } catch (error) {
           console.error('Error applying stealth measures:', error);
@@ -822,6 +824,66 @@ function createSystemTray() {
       }
     },
     {
+      type: 'separator'
+    },
+    {
+      label: 'Window Size',
+      type: 'submenu',
+      submenu: [
+        {
+          label: 'Small (800x600)',
+          click: () => {
+            if (mainWindow) {
+              mainWindow.setSize(800, 600);
+            }
+          }
+        },
+        {
+          label: 'Medium (1200x800)',
+          click: () => {
+            if (mainWindow) {
+              mainWindow.setSize(1200, 800);
+            }
+          }
+        },
+        {
+          label: 'Large (1600x1000)',
+          click: () => {
+            if (mainWindow) {
+              mainWindow.setSize(1600, 1000);
+            }
+          }
+        },
+        {
+          type: 'separator'
+        },
+        {
+          label: 'Toggle Fullscreen',
+          click: () => {
+            if (mainWindow) {
+              if (mainWindow.isFullScreen()) {
+                mainWindow.setFullScreen(false);
+              } else {
+                mainWindow.setFullScreen(true);
+              }
+            }
+          }
+        },
+        {
+          label: 'Toggle Maximize',
+          click: () => {
+            if (mainWindow) {
+              if (mainWindow.isMaximized()) {
+                mainWindow.unmaximize();
+              } else {
+                mainWindow.maximize();
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
       label: 'Always on Top',
       type: 'checkbox',
       checked: true,
@@ -903,7 +965,7 @@ function registerGlobalShortcuts() {
   console.log('Registering global shortcuts...');
   
   // Ctrl+Shift + Right: Move window right
-  globalShortcut.register('CommandOrControl+Shift+Right', () => {
+  globalShortcut.register('CommandOrControl+Alt+Right', () => {
     if (mainWindow) {
       const [x, y] = mainWindow.getPosition();
       mainWindow.setPosition(x + 100, y);
@@ -911,41 +973,103 @@ function registerGlobalShortcuts() {
   });
 
   // Ctrl+Shift + Left: Move window left
-  globalShortcut.register('CommandOrControl+Shift+Left', () => {
+  globalShortcut.register('CommandOrControl+Alt+Left', () => {
     if (mainWindow) {
       const [x, y] = mainWindow.getPosition();
       mainWindow.setPosition(x - 100, y);
     }
   });
 
-  // Ctrl+Shift + Up: Increase transparency
-  globalShortcut.register('CommandOrControl+Up', () => {
-    console.log('Transparency INCREASE hotkey triggered!');
+  // Ctrl+Alt + 1: Set window to small size (800x600)
+  globalShortcut.register('CommandOrControl+Alt+1', () => {
+    if (mainWindow) {
+      mainWindow.setSize(800, 600);
+      console.log('Window size set to: 800x600 (small)');
+    }
+  });
+
+  // Ctrl+Alt + 2: Set window to medium size (1200x800)
+  globalShortcut.register('CommandOrControl+Alt+2', () => {
+    if (mainWindow) {
+      mainWindow.setSize(1200, 800);
+      console.log('Window size set to: 1200x800 (medium)');
+    }
+  });
+
+  // Ctrl+Alt + 3: Set window to large size (1600x1000)
+  globalShortcut.register('CommandOrControl+Alt+3', () => {
+    if (mainWindow) {
+      mainWindow.setSize(1600, 1000);
+      console.log('Window size set to: 1600x1000 (large)');
+    }
+  });
+
+  // Ctrl+Alt + 4: Toggle fullscreen
+  globalShortcut.register('CommandOrControl+Alt+4', () => {
+    if (mainWindow) {
+      if (mainWindow.isFullScreen()) {
+        mainWindow.setFullScreen(false);
+        console.log('Window set to windowed mode');
+      } else {
+        mainWindow.setFullScreen(true);
+        console.log('Window set to fullscreen mode');
+      }
+    }
+  });
+
+  // Ctrl+Alt + 5: Toggle maximize
+  globalShortcut.register('CommandOrControl+Alt+5', () => {
+    if (mainWindow) {
+      if (mainWindow.isMaximized()) {
+        mainWindow.unmaximize();
+        console.log('Window unmaximized');
+      } else {
+        mainWindow.maximize();
+        console.log('Window maximized');
+      }
+    }
+  });
+
+  // Ctrl+Alt + Up: Make window MORE OPAQUE (less transparent)
+  globalShortcut.register('CommandOrControl+Alt+Up', () => {
+    console.log('MAKE MORE OPAQUE hotkey triggered!');
+    console.log('Current opacity before change:', currentOpacity);
     if (mainWindow && currentOpacity < 1.0) {
       currentOpacity = Math.min(1.0, currentOpacity + 0.1);
       mainWindow.setOpacity(currentOpacity);
       store.set('opacity', currentOpacity);
-      console.log('Transparency increased to:', (currentOpacity * 100).toFixed(0) + '%');
+      console.log('Window made MORE OPAQUE to:', (currentOpacity * 100).toFixed(0) + '%');
+      console.log('Window opacity set to:', mainWindow.getOpacity());
+    } else if (mainWindow && currentOpacity >= 1.0) {
+      console.log('Window already at maximum opacity (100%) - keeping current value');
+      console.log('Current opacity:', (currentOpacity * 100).toFixed(0) + '%');
     } else {
-      console.log('Cannot increase transparency - already at maximum or window not available');
+      console.log('Cannot change opacity - window not available');
+      console.log('Current opacity:', currentOpacity, 'Window available:', !!mainWindow);
     }
   });
 
-  // Ctrl+Shift + Down: Decrease transparency
-  globalShortcut.register('CommandOrControl+Shift+Down', () => {
-    console.log('Transparency DECREASE hotkey triggered!');
-    if (mainWindow && currentOpacity > 0.1) {
-      currentOpacity = Math.max(0.1, currentOpacity - 0.1);
+  // Ctrl+Alt + Down: Make window MORE TRANSPARENT (less opaque)
+  globalShortcut.register('CommandOrControl+Alt+Down', () => {
+    console.log('MAKE MORE TRANSPARENT hotkey triggered!');
+    console.log('Current opacity before change:', currentOpacity);
+    if (mainWindow && currentOpacity > 0.4) {
+      currentOpacity = Math.max(0.4, currentOpacity - 0.1);
       mainWindow.setOpacity(currentOpacity);
       store.set('opacity', currentOpacity);
-      console.log('Transparency decreased to:', (currentOpacity * 100).toFixed(0) + '%');
+      console.log('Window made MORE TRANSPARENT to:', (currentOpacity * 100).toFixed(0) + '%');
+      console.log('Window opacity set to:', mainWindow.getOpacity());
+    } else if (mainWindow && currentOpacity <= 0.4) {
+      console.log('Window already at minimum opacity (40%) - keeping current value');
+      console.log('Current opacity:', (currentOpacity * 100).toFixed(0) + '%');
     } else {
-      console.log('Cannot decrease transparency - already at minimum or window not available');
+      console.log('Cannot change opacity - window not available');
+      console.log('Current opacity:', currentOpacity, 'Window available:', !!mainWindow);
     }
   });
 
   // Ctrl+Shift + .: Hide/Show window
-  globalShortcut.register('CommandOrControl+Shift+.', () => {
+  globalShortcut.register('CommandOrControl+Alt+.', () => {
     if (mainWindow) {
       if (isHidden || !mainWindow.isVisible()) {
         showMainWindow();
@@ -976,6 +1100,26 @@ function registerGlobalShortcuts() {
     if (mainWindow) {
       startScreenCapture();
     }
+  });
+
+  // Test hotkey to check transparency status
+  globalShortcut.register('CommandOrControl+Alt+0', () => {
+    console.log('=== TRANSPARENCY STATUS TEST ===');
+    console.log('Current opacity variable:', currentOpacity);
+    if (mainWindow) {
+      console.log('Window opacity:', mainWindow.getOpacity());
+      console.log('Window is visible:', mainWindow.isVisible());
+      console.log('Window is focused:', mainWindow.isFocused());
+      console.log('Window bounds:', mainWindow.getBounds());
+      
+      // Force sync the opacity
+      console.log('Forcing opacity to match variable...');
+      mainWindow.setOpacity(currentOpacity);
+      console.log('Window opacity after sync:', mainWindow.getOpacity());
+    } else {
+      console.log('Main window is not available');
+    }
+    console.log('===============================');
   });
 
   // Verify all hotkeys are registered
@@ -1152,13 +1296,18 @@ function startScreenCapture() {
   captureWindow.loadFile(path.join(__dirname, 'capture-overlay.html'));
 
   captureWindow.once('ready-to-show', () => {
-    // Apply stealth protection to capture overlay
+    // Apply maximum stealth protection to capture overlay
     try {
+      // Enable content protection to make overlay invisible to screen capture
       captureWindow.setContentProtection(true);
       captureWindow.setVisibleOnAllWorkspaces(false, { visibleOnFullScreen: false });
       captureWindow.setAlwaysOnTop(true, 'screen-saver');
       captureWindow.setSkipTaskbar(true);
-      console.log('Capture overlay stealth protection enabled');
+      
+      // Additional stealth measures for capture overlay
+      captureWindow.setContentProtection(true); // Ensure it's set
+      
+      console.log('Capture overlay content protection enabled - invisible to screen capture');
     } catch (error) {
       console.error('Error applying stealth protection to capture overlay:', error);
     }
@@ -1207,11 +1356,18 @@ function startScreenCapture() {
   const captureStealthInterval = setInterval(() => {
     if (captureWindow && !captureWindow.isDestroyed()) {
       try {
+        // Ensure content protection is always enabled for capture overlay
+        captureWindow.setContentProtection(true);
+        
         // Lightweight stealth check - only apply if needed
         if (!captureWindow.isAlwaysOnTop()) {
           captureWindow.setAlwaysOnTop(true, 'screen-saver');
         }
-        captureWindow.setContentProtection(true);
+        
+        // Additional stealth measures
+        captureWindow.setVisibleOnAllWorkspaces(false, { visibleOnFullScreen: false });
+        captureWindow.setSkipTaskbar(true);
+        
       } catch (error) {
         console.error('Error maintaining capture overlay stealth:', error);
       }
