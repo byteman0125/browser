@@ -258,9 +258,13 @@ function createWindow(startHidden = false) {
     visibleOnAllWorkspaces: false, // Make window completely invisible to system screen capture
     fullscreenable: false, // Prevent fullscreen mode
     minimizable: false, // Prevent minimization
-    maximizable: false, // Prevent maximization
-    resizable: false, // Prevent resizing
+    maximizable: true, // Allow maximization
+    resizable: true, // Allow resizing with mouse drag
     closable: false, // Prevent closing (we handle this ourselves)
+    minWidth: 400, // Minimum window width
+    minHeight: 300, // Minimum window height
+    maxWidth: 1920, // Maximum window width
+    maxHeight: 1080, // Maximum window height
     // Additional stealth properties
     hasShadow: false, // Remove window shadow
     thickFrame: false, // Remove thick frame
