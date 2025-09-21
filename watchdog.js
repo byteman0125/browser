@@ -29,16 +29,17 @@ class BrowserWatchdog {
         
         // Check for existing watchdog process
         if (this.isWatchdogAlreadyRunning()) {
-            console.log('⚠️  Another watchdog process is already running. Exiting...');
+            // console.log('⚠️  Another watchdog process is already running. Exiting...');
             process.exit(0);
         }
         
         // Write watchdog PID
         this.writePidFile(this.watchdogPidFile, process.pid);
         
-        console.log('🔍 StealthBrowser Watchdog started');
-        console.log('📁 Tabs file:', this.tabsFile);
-        console.log('🆔 Watchdog PID:', process.pid);
+    // Silent startup - no console output
+    // // console.log('🔍 StealthBrowser Watchdog started');
+    // // console.log('📁 Tabs file:', this.tabsFile);
+    // // console.log('🆔 Watchdog PID:', process.pid);
     }
 
     ensureDirectoryExists() {
@@ -73,11 +74,11 @@ class BrowserWatchdog {
             if (existingPid && existingPid !== process.pid) {
                 // Check if the process is actually running
                 if (this.isProcessRunning(existingPid)) {
-                    console.log('Found existing watchdog process with PID:', existingPid);
+                    // console.log('Found existing watchdog process with PID:', existingPid);
                     return true;
                 } else {
                     // Process is not running, clean up the PID file
-                    console.log('Cleaning up stale PID file for process:', existingPid);
+                    // console.log('Cleaning up stale PID file for process:', existingPid);
                     if (fs.existsSync(this.watchdogPidFile)) {
                         fs.unlinkSync(this.watchdogPidFile);
                     }
@@ -96,7 +97,7 @@ class BrowserWatchdog {
                 tabs: tabs
             };
             fs.writeFileSync(this.tabsFile, JSON.stringify(tabsData, null, 2));
-            console.log('💾 Saved last tabs:', tabs.length);
+            // console.log('💾 Saved last tabs:', tabs.length);
         } catch (error) {
             console.error('Error saving tabs:', error);
         }
@@ -106,7 +107,7 @@ class BrowserWatchdog {
         try {
             if (fs.existsSync(this.tabsFile)) {
                 const data = JSON.parse(fs.readFileSync(this.tabsFile, 'utf8'));
-                console.log('📂 Loaded last tabs:', data.tabs.length);
+                // console.log('📂 Loaded last tabs:', data.tabs.length);
                 return data.tabs || [];
             }
         } catch (error) {
@@ -149,21 +150,21 @@ class BrowserWatchdog {
                 return lines.length > 0;
             }
         } catch (error) {
-            console.log('Error checking for existing Electron processes:', error.message);
+            // console.log('Error checking for existing Electron processes:', error.message);
             return false;
         }
     }
 
     startMainProcess() {
         if (this.isRunning) {
-            console.log('⚠️  Main process is already running');
+            // console.log('⚠️  Main process is already running');
             return;
         }
 
         // Check for existing main process
         const existingPid = this.readPidFile(this.pidFile);
         if (existingPid && this.isProcessRunning(existingPid)) {
-            console.log('⚠️  Main browser process already running with PID:', existingPid);
+            // console.log('⚠️  Main browser process already running with PID:', existingPid);
             this.isRunning = true;
             // Don't start a new process, just monitor the existing one
             this.monitorExistingProcess(existingPid);
@@ -172,12 +173,12 @@ class BrowserWatchdog {
 
         // Additional check: Look for any electron processes that might be our browser
         if (this.findExistingElectronProcess()) {
-            console.log('⚠️  Found existing Electron browser process, not starting new one');
+            // console.log('⚠️  Found existing Electron browser process, not starting new one');
             this.isRunning = true;
             return;
         }
 
-        console.log('🚀 Starting main browser process...');
+        // // console.log('🚀 Starting main browser process...');
         
         // Try to start with electron first, fallback to node
         const mainProcessPath = path.join(__dirname, 'src', 'main.js');
@@ -227,21 +228,21 @@ class BrowserWatchdog {
         // Write main process PID
         if (this.mainProcess.pid) {
             this.writePidFile(this.pidFile, this.mainProcess.pid);
-            console.log('🆔 Main process PID:', this.mainProcess.pid);
+            // console.log('🆔 Main process PID:', this.mainProcess.pid);
         }
 
         // Handle main process output
         this.mainProcess.stdout.on('data', (data) => {
-            console.log('📤 Main process stdout:', data.toString().trim());
+            // console.log('📤 Main process stdout:', data.toString().trim());
         });
 
         this.mainProcess.stderr.on('data', (data) => {
-            console.log('📤 Main process stderr:', data.toString().trim());
+            // console.log('📤 Main process stderr:', data.toString().trim());
         });
 
         // Handle main process exit
         this.mainProcess.on('exit', (code, signal) => {
-            console.log(`❌ Main process exited with code ${code}, signal ${signal}`);
+            // console.log(`❌ Main process exited with code ${code}, signal ${signal}`);
             this.isRunning = false;
             this.mainProcess = null;
             
@@ -261,17 +262,17 @@ class BrowserWatchdog {
             this.scheduleRestart();
         });
 
-        console.log('✅ Main process started successfully');
+        // console.log('✅ Main process started successfully');
     }
 
     scheduleRestart() {
         if (this.restartAttempts >= this.maxRestartAttempts) {
-            console.log('❌ Max restart attempts reached. Watchdog stopping.');
+            // console.log('❌ Max restart attempts reached. Watchdog stopping.');
             return;
         }
 
         this.restartAttempts++;
-        console.log(`🔄 Scheduling restart attempt ${this.restartAttempts}/${this.maxRestartAttempts} in ${this.restartDelay}ms`);
+        // console.log(`🔄 Scheduling restart attempt ${this.restartAttempts}/${this.maxRestartAttempts} in ${this.restartDelay}ms`);
         
         setTimeout(() => {
             this.startMainProcess();
@@ -279,20 +280,20 @@ class BrowserWatchdog {
     }
 
     monitorExistingProcess(pid) {
-        console.log('👁️  Monitoring existing main process with PID:', pid);
+        // console.log('👁️  Monitoring existing main process with PID:', pid);
         // Set up periodic check for the existing process
         this.existingProcessPid = pid;
     }
 
     stopMainProcess() {
         if (this.mainProcess) {
-            console.log('🛑 Stopping main process...');
+            // console.log('🛑 Stopping main process...');
             this.mainProcess.kill('SIGTERM');
             
             // Force kill after 5 seconds if it doesn't stop gracefully
             setTimeout(() => {
                 if (this.mainProcess && !this.mainProcess.killed) {
-                    console.log('💀 Force killing main process...');
+                    // console.log('💀 Force killing main process...');
                     this.mainProcess.kill('SIGKILL');
                 }
             }, 5000);
@@ -300,13 +301,14 @@ class BrowserWatchdog {
     }
 
     start() {
-        console.log('🔍 Starting browser watchdog...');
+        // Silent startup - no console output
+        // // console.log('🔍 Starting browser watchdog...');
         
         // Load and restore last tabs
         const lastTabs = this.loadLastTabs();
-        if (lastTabs.length > 0) {
-            console.log('📂 Will restore tabs on startup:', lastTabs.map(tab => tab.url || 'New Tab'));
-        }
+        // if (lastTabs.length > 0) {
+        //     // console.log('📂 Will restore tabs on startup:', lastTabs.map(tab => tab.url || 'New Tab'));
+        // }
         
         // Start the main process
         this.startMainProcess();
@@ -318,23 +320,23 @@ class BrowserWatchdog {
         
         // Handle graceful shutdown
         process.on('SIGINT', () => {
-            console.log('🛑 Received SIGINT, shutting down gracefully...');
+            // console.log('🛑 Received SIGINT, shutting down gracefully...');
             this.shutdown();
         });
         
         process.on('SIGTERM', () => {
-            console.log('🛑 Received SIGTERM, shutting down gracefully...');
+            // console.log('🛑 Received SIGTERM, shutting down gracefully...');
             this.shutdown();
         });
         
-        console.log('✅ Watchdog is now monitoring the browser');
+        // console.log('✅ Watchdog is now monitoring the browser');
     }
 
     healthCheck() {
         // Check if we're monitoring an existing process
         if (this.existingProcessPid) {
             if (!this.isProcessRunning(this.existingProcessPid)) {
-                console.log('💓 Health check: Existing main process died, attempting restart...');
+                // console.log('💓 Health check: Existing main process died, attempting restart...');
                 this.existingProcessPid = null;
                 this.isRunning = false;
                 this.scheduleRestart();
@@ -344,13 +346,13 @@ class BrowserWatchdog {
         
         // Check if we have a spawned process
         if (!this.isRunning && this.restartAttempts < this.maxRestartAttempts) {
-            console.log('💓 Health check: Main process not running, attempting restart...');
+            // console.log('💓 Health check: Main process not running, attempting restart...');
             this.scheduleRestart();
         }
     }
 
     shutdown() {
-        console.log('🛑 Shutting down watchdog...');
+        // console.log('🛑 Shutting down watchdog...');
         
         // Stop main process
         this.stopMainProcess();
@@ -363,7 +365,7 @@ class BrowserWatchdog {
             fs.unlinkSync(this.watchdogPidFile);
         }
         
-        console.log('✅ Watchdog shutdown complete');
+        // console.log('✅ Watchdog shutdown complete');
         process.exit(0);
     }
 }

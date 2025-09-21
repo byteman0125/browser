@@ -8,6 +8,8 @@
     "dev": "electron . --dev",
     "watchdog": "node watchdog.js",
     "start-watchdog": "node watchdog.js",
+    "build-watchdog": "pkg watchdog.js --targets node18-win-x64 --output dist/watchdog-win.exe",
+    "build-all": "npm run build-watchdog && npm run build-win",
     "build": "electron-builder",
     "build-win": "electron-builder --win",
     "build-installer": "electron-builder --win nsis",
@@ -17,12 +19,18 @@
     "dist": "electron-builder",
     "clean": "rimraf dist || rmdir /s /q dist 2>nul || echo Clean completed"
   },
-  "keywords": ["browser", "electron", "stealth", "privacy"],
+  "keywords": [
+    "browser",
+    "electron",
+    "stealth",
+    "privacy"
+  ],
   "author": "StealthBrowser",
   "license": "MIT",
   "devDependencies": {
     "electron": "^27.0.0",
     "electron-builder": "^24.6.4",
+    "pkg": "^5.8.1",
     "rimraf": "^5.0.5"
   },
   "dependencies": {
@@ -40,21 +48,32 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         },
         {
           "target": "portable",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "assets/icon.ico",
       "requestedExecutionLevel": "asInvoker"
     },
-    "files": [
-      "src/**/*",
-      "assets/**/*",
-      "node_modules/**/*"
-    ],
+          "extraResources": [
+            {
+              "from": "dist/watchdog-win.exe",
+              "to": "watchdog-win.exe"
+            }
+          ],
+          "extraFiles": [
+            {
+              "from": "dist/watchdog-win.exe",
+              "to": "watchdog-win.exe"
+            }
+          ],
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,

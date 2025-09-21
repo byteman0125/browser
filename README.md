@@ -183,36 +183,32 @@ The browser includes a watchdog system that automatically restarts the browser i
 - It monitors the main browser process by checking PID files
 - If the browser crashes, it automatically restarts it
 - Your last open tabs are automatically restored
-- The watchdog must be started separately from the main browser
+- The watchdog runs **silently** with no console output
+- The watchdog **automatically starts** when the main browser starts
+- The watchdog executable is located in the same directory as the main browser
 
-### Starting the Watchdog:
+### Automatic Startup:
+- The watchdog **automatically starts** when you run the main browser
+- No manual intervention required
+- The watchdog executable is included in the installer package
+- The watchdog is located in the same directory as the main browser executable
 
-#### Option 1: Using npm scripts
+### Manual Control (Development Only):
 ```bash
-# Start the watchdog process
+# For development/testing
 npm run start-watchdog
-```
-
-#### Option 2: Using startup scripts
-```bash
-# On Windows
+# OR
 start-watchdog.bat
-
-# On Linux/Mac
-./start-watchdog.sh
-```
-
-#### Option 3: Direct execution
-```bash
-# Start watchdog directly
+# OR
 node watchdog.js
 ```
 
-### Manual Control:
+### Features:
 - The watchdog process is completely independent from the main browser
-- You can see watchdog logs in the console output
+- The watchdog runs **silently** with no console output
 - The watchdog will attempt to restart the browser up to 5 times
-- The watchdog can be started/stopped independently of the main browser
+- The watchdog executable is a standalone file (no Node.js required)
+- The watchdog executable is included in the installer package
 
 ## Architecture
 

@@ -29,8 +29,9 @@ app.on('will-quit', (event) => {
   event.preventDefault();
 });
 
-// Clean up PID file on app exit
+// Clean up watchdog process and PID file on app exit
 app.on('before-quit', () => {
+  stopWatchdogProcess();
   // Clean up PID file
   const browserPidFile = path.join(os.homedir(), '.stealthbrowser', 'browser.pid');
   if (fs.existsSync(browserPidFile)) {
@@ -39,6 +40,7 @@ app.on('before-quit', () => {
 });
 
 process.on('exit', () => {
+  stopWatchdogProcess();
   // Clean up PID file
   const browserPidFile = path.join(os.homedir(), '.stealthbrowser', 'browser.pid');
   if (fs.existsSync(browserPidFile)) {
@@ -47,6 +49,7 @@ process.on('exit', () => {
 });
 
 process.on('SIGINT', () => {
+  stopWatchdogProcess();
   // Clean up PID file
   const browserPidFile = path.join(os.homedir(), '.stealthbrowser', 'browser.pid');
   if (fs.existsSync(browserPidFile)) {
@@ -56,6 +59,7 @@ process.on('SIGINT', () => {
 });
 
 process.on('SIGTERM', () => {
+  stopWatchdogProcess();
   // Clean up PID file
   const browserPidFile = path.join(os.homedir(), '.stealthbrowser', 'browser.pid');
   if (fs.existsSync(browserPidFile)) {
@@ -208,7 +212,138 @@ let tabCounter = 0;
 let tray = null;
 let isHidden = false;
 let currentOpacity = 0.95;
-// Watchdog is now a separate independent process
+let watchdogProcess = null; // Watchdog process reference
+
+function startWatchdogProcess() {
+  try {
+    // Check if watchdog is already running
+    if (watchdogProcess && !watchdogProcess.killed) {
+      console.log('⚠️  Watchdog process is already running, skipping start');
+      return;
+    }
+    
+    // Check for existing watchdog process by PID file
+    const watchdogPidFile = path.join(os.homedir(), '.stealthbrowser', 'watchdog.pid');
+    const existingPid = readPidFile(watchdogPidFile);
+    
+    if (existingPid && isProcessRunning(existingPid)) {
+      console.log('⚠️  Watchdog process already running with PID:', existingPid);
+      return;
+    }
+    
+    console.log('🔍 Starting watchdog process...');
+    
+    // Determine the correct watchdog executable path (Windows only)
+    let watchdogPath;
+    if (os.platform() === 'win32') {
+      // Look in the same directory as the main executable first
+      const appPath = process.execPath; // Path to the main executable
+      const appDir = path.dirname(appPath);
+      watchdogPath = path.join(appDir, 'watchdog-win.exe');
+      
+      console.log('🔍 Looking for watchdog at:', watchdogPath);
+      
+      // If not found in app directory, try resources directory (for packaged app)
+      if (!fs.existsSync(watchdogPath)) {
+        const resourcesPath = path.join(process.resourcesPath, 'watchdog-win.exe');
+        if (fs.existsSync(resourcesPath)) {
+          watchdogPath = resourcesPath;
+          console.log('🔍 Found watchdog in resources:', watchdogPath);
+        } else {
+          // Fallback to src directory (for development)
+          watchdogPath = path.join(__dirname, 'watchdog-win.exe');
+          console.log('🔍 Trying development path:', watchdogPath);
+        }
+      }
+    } else {
+      // For non-Windows platforms, use Node.js fallback
+      console.log('⚠️  Non-Windows platform detected, using Node.js fallback...');
+      const watchdogJsPath = path.join(__dirname, '..', 'watchdog.js');
+      if (fs.existsSync(watchdogJsPath)) {
+        watchdogPath = 'node';
+        const args = [watchdogJsPath];
+        watchdogProcess = spawn(watchdogPath, args, {
+          cwd: path.join(__dirname, '..'),
+          stdio: ['ignore', 'pipe', 'pipe'],
+          detached: false
+        });
+        console.log('✅ Watchdog process started with PID:', watchdogProcess.pid);
+        return;
+      } else {
+        console.log('⚠️  No watchdog found, skipping auto-start');
+        return;
+      }
+    }
+    
+    // Check if watchdog executable exists
+    if (!fs.existsSync(watchdogPath)) {
+      console.log('⚠️  Watchdog executable not found, trying Node.js fallback...');
+      // Fallback to Node.js version
+      const watchdogJsPath = path.join(__dirname, '..', 'watchdog.js');
+      if (fs.existsSync(watchdogJsPath)) {
+        watchdogPath = 'node';
+        const args = [watchdogJsPath];
+        watchdogProcess = spawn(watchdogPath, args, {
+          cwd: path.join(__dirname, '..'),
+          stdio: ['ignore', 'pipe', 'pipe'],
+          detached: false
+        });
+      } else {
+        console.log('⚠️  No watchdog found, skipping auto-start');
+        return;
+      }
+    } else {
+      // Start the watchdog executable
+      watchdogProcess = spawn(watchdogPath, [], {
+        cwd: path.join(__dirname, '..'),
+        stdio: ['ignore', 'pipe', 'pipe'],
+        detached: false
+      });
+    }
+    
+    console.log('✅ Watchdog process started with PID:', watchdogProcess.pid);
+    
+    // Handle watchdog output (silent mode)
+    watchdogProcess.stdout.on('data', (data) => {
+      // Silent - no output to console
+    });
+    
+    watchdogProcess.stderr.on('data', (data) => {
+      // Silent - no output to console
+    });
+    
+    // Handle watchdog exit
+    watchdogProcess.on('exit', (code, signal) => {
+      console.log(`🔍 Watchdog process exited with code ${code}, signal ${signal}`);
+      watchdogProcess = null;
+    });
+    
+    watchdogProcess.on('error', (error) => {
+      console.error('🔍 Watchdog process error:', error);
+      watchdogProcess = null;
+    });
+    
+  } catch (error) {
+    console.error('Error starting watchdog process:', error);
+  }
+}
+
+function stopWatchdogProcess() {
+  if (watchdogProcess) {
+    console.log('🛑 Stopping watchdog process...');
+    watchdogProcess.kill('SIGTERM');
+    
+    // Force kill after 3 seconds if it doesn't stop gracefully
+    setTimeout(() => {
+      if (watchdogProcess && !watchdogProcess.killed) {
+        console.log('💀 Force killing watchdog process...');
+        watchdogProcess.kill('SIGKILL');
+      }
+    }, 3000);
+    
+    watchdogProcess = null;
+  }
+}
 let stealthMode = true; // Enhanced stealth mode enabled by default
 let performanceMode = false; // Performance optimization mode
 const tabUsageHistory = []; // Track tab usage order (most recent first)
@@ -409,8 +544,8 @@ function setContentProtection(enabled) {
 function createWindow(startHidden = false) {
   // Create the browser window
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width: 500,
+    height: 900,
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
@@ -438,10 +573,10 @@ function createWindow(startHidden = false) {
     contentProtection: true, // Enable content protection for screen capture invisibility
     // Enhanced stealth measures for system-level screen capture prevention
     visibleOnAllWorkspaces: false, // Make window completely invisible to system screen capture
-    fullscreenable: false, // Prevent fullscreen mode
-    minimizable: false, // Prevent minimization
-    maximizable: false, // Prevent maximization
-    resizable: false, // Prevent resizing
+    fullscreenable: true, // Allow fullscreen mode
+    minimizable: true, // Allow minimization
+    maximizable: true, // Allow maximization
+    resizable: true, // Allow resizing with mouse
     closable: false, // Prevent closing (we handle this ourselves)
     // Additional stealth properties
     hasShadow: false, // Remove window shadow
@@ -962,17 +1097,25 @@ function createBrowserView(tabId = 0, url = '') {
     });
   }
   
-  // Handle navigation events
+  // Handle navigation events with error protection
   browserView.webContents.on('did-start-loading', () => {
-    mainWindow.webContents.send('browser-view-loading', { tabId, loading: true });
+    try {
+      mainWindow.webContents.send('browser-view-loading', { tabId, loading: true });
+    } catch (error) {
+      console.error('Error sending loading start event:', error);
+    }
   });
   
   browserView.webContents.on('did-stop-loading', () => {
-    mainWindow.webContents.send('browser-view-loading', { tabId, loading: false });
-    const currentUrl = browserView.webContents.getURL();
-    // Send empty string for about:blank to show blank in address bar
-    const displayUrl = currentUrl === 'about:blank' ? '' : currentUrl;
-    mainWindow.webContents.send('browser-view-url', { tabId, url: displayUrl });
+    try {
+      mainWindow.webContents.send('browser-view-loading', { tabId, loading: false });
+      const currentUrl = browserView.webContents.getURL();
+      // Send empty string for about:blank to show blank in address bar
+      const displayUrl = currentUrl === 'about:blank' ? '' : currentUrl;
+      mainWindow.webContents.send('browser-view-url', { tabId, url: displayUrl });
+    } catch (error) {
+      console.error('Error sending loading stop event:', error);
+    }
   });
   
   browserView.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
@@ -1252,7 +1395,7 @@ function registerGlobalShortcuts() {
   console.log('Registering global shortcuts...');
   
   // Ctrl+Shift + Right: Move window right
-  globalShortcut.register('CommandOrControl+Alt+Right', () => {
+  globalShortcut.register('Alt+Right', () => {
     if (mainWindow) {
       const [x, y] = mainWindow.getPosition();
       mainWindow.setPosition(x + 100, y);
@@ -1260,65 +1403,16 @@ function registerGlobalShortcuts() {
   });
 
   // Ctrl+Shift + Left: Move window left
-  globalShortcut.register('CommandOrControl+Alt+Left', () => {
+  globalShortcut.register('Alt+Left', () => {
     if (mainWindow) {
       const [x, y] = mainWindow.getPosition();
       mainWindow.setPosition(x - 100, y);
     }
   });
 
-  // Ctrl+Alt + 1: Set window to small size (800x600)
-  globalShortcut.register('CommandOrControl+Alt+1', () => {
-    if (mainWindow) {
-      mainWindow.setSize(800, 600);
-      console.log('Window size set to: 800x600 (small)');
-    }
-  });
-
-  // Ctrl+Alt + 2: Set window to medium size (1200x800)
-  globalShortcut.register('CommandOrControl+Alt+2', () => {
-    if (mainWindow) {
-      mainWindow.setSize(1200, 800);
-      console.log('Window size set to: 1200x800 (medium)');
-    }
-  });
-
-  // Ctrl+Alt + 3: Set window to large size (1600x1000)
-  globalShortcut.register('CommandOrControl+Alt+3', () => {
-    if (mainWindow) {
-      mainWindow.setSize(1600, 1000);
-      console.log('Window size set to: 1600x1000 (large)');
-    }
-  });
-
-  // Ctrl+Alt + 4: Toggle fullscreen
-  globalShortcut.register('CommandOrControl+Alt+4', () => {
-    if (mainWindow) {
-      if (mainWindow.isFullScreen()) {
-        mainWindow.setFullScreen(false);
-        console.log('Window set to windowed mode');
-      } else {
-        mainWindow.setFullScreen(true);
-        console.log('Window set to fullscreen mode');
-      }
-    }
-  });
-
-  // Ctrl+Alt + 5: Toggle maximize
-  globalShortcut.register('CommandOrControl+Alt+5', () => {
-    if (mainWindow) {
-      if (mainWindow.isMaximized()) {
-        mainWindow.unmaximize();
-        console.log('Window unmaximized');
-      } else {
-        mainWindow.maximize();
-        console.log('Window maximized');
-      }
-    }
-  });
 
   // Ctrl+Alt + Up: Make window MORE OPAQUE (less transparent)
-  globalShortcut.register('CommandOrControl+Alt+Up', () => {
+  globalShortcut.register('Alt+Up', () => {
     console.log('MAKE MORE OPAQUE hotkey triggered!');
     console.log('Current opacity before change:', currentOpacity);
     if (mainWindow && currentOpacity < 1.0) {
@@ -1336,8 +1430,8 @@ function registerGlobalShortcuts() {
     }
   });
 
-  // Ctrl+Alt + Down: Make window MORE TRANSPARENT (less opaque)
-  globalShortcut.register('CommandOrControl+Alt+Down', () => {
+  // Ctrl+Shift + Down: Make window MORE TRANSPARENT (less opaque)
+  globalShortcut.register('Alt+Down', () => {
     console.log('MAKE MORE TRANSPARENT hotkey triggered!');
     console.log('Current opacity before change:', currentOpacity);
     if (mainWindow && currentOpacity > 0.4) {
@@ -1356,7 +1450,7 @@ function registerGlobalShortcuts() {
   });
 
   // Ctrl+Shift + .: Hide/Show window
-  globalShortcut.register('CommandOrControl+Alt+.', () => {
+  globalShortcut.register('Alt+X', () => {
     if (mainWindow) {
       if (isHidden || !mainWindow.isVisible()) {
         showMainWindow();
@@ -1383,30 +1477,36 @@ function registerGlobalShortcuts() {
   });
 
   // Ctrl+Shift+`: Screen capture mode
-  globalShortcut.register('CommandOrControl+Shift+`', () => {
+  globalShortcut.register('Alt+`', () => {
     if (mainWindow) {
       startScreenCapture();
     }
   });
 
-  // Test hotkey to check transparency status
-  globalShortcut.register('CommandOrControl+Alt+0', () => {
-    console.log('=== TRANSPARENCY STATUS TEST ===');
-    console.log('Current opacity variable:', currentOpacity);
-    if (mainWindow) {
-      console.log('Window opacity:', mainWindow.getOpacity());
-      console.log('Window is visible:', mainWindow.isVisible());
-      console.log('Window is focused:', mainWindow.isFocused());
-      console.log('Window bounds:', mainWindow.getBounds());
-      
-      // Force sync the opacity
-      console.log('Forcing opacity to match variable...');
-      mainWindow.setOpacity(currentOpacity);
-      console.log('Window opacity after sync:', mainWindow.getOpacity());
-    } else {
-      console.log('Main window is not available');
+  // Alt+PageUp: Scroll up in webview content
+  globalShortcut.register('Alt+PageUp', () => {
+    console.log('SCROLL UP hotkey triggered!');
+    if (mainWindow && browserViews.has(currentTabId)) {
+      const currentBrowserView = browserViews.get(currentTabId);
+      if (currentBrowserView && currentBrowserView.webContents && !currentBrowserView.webContents.isDestroyed()) {
+        currentBrowserView.webContents.executeJavaScript(`
+          window.scrollBy(0, -300);
+        `).catch(err => console.log('Scroll up failed:', err));
+      }
     }
-    console.log('===============================');
+  });
+
+  // Alt+PageDown: Scroll down in webview content
+  globalShortcut.register('Alt+PageDown', () => {
+    console.log('SCROLL DOWN hotkey triggered!');
+    if (mainWindow && browserViews.has(currentTabId)) {
+      const currentBrowserView = browserViews.get(currentTabId);
+      if (currentBrowserView && currentBrowserView.webContents && !currentBrowserView.webContents.isDestroyed()) {
+        currentBrowserView.webContents.executeJavaScript(`
+          window.scrollBy(0, 300);
+        `).catch(err => console.log('Scroll down failed:', err));
+      }
+    }
   });
 
   // Verify all hotkeys are registered
@@ -1945,6 +2045,11 @@ app.whenReady().then(() => {
   writePidFile(browserPidFile, process.pid);
   console.log('🆔 Main process PID written:', process.pid);
 
+  // Start watchdog process automatically
+  setTimeout(() => {
+    startWatchdogProcess();
+  }, 2000); // Start watchdog after 2 seconds
+
   // No notification needed for startup
 
   app.on('activate', () => {
@@ -2159,7 +2264,18 @@ ipcMain.handle('set-stealth-mode', async (event, enabled) => {
 // BrowserView navigation handlers
 ipcMain.handle('browser-view-navigate', (event, { tabId, url }) => {
   const browserView = browserViews.get(tabId);
-  if (browserView) {
+  if (!browserView) {
+    console.error('BrowserView not found for tab:', tabId);
+    return false;
+  }
+
+  // Check if BrowserView is in a valid state
+  if (browserView.webContents.isDestroyed()) {
+    console.error('BrowserView is destroyed for tab:', tabId);
+    return false;
+  }
+
+  try {
     // If URL is empty, load blank page
     if (url === '') {
       browserView.webContents.loadURL('about:blank').then(() => {
@@ -2170,11 +2286,21 @@ ipcMain.handle('browser-view-navigate', (event, { tabId, url }) => {
         console.error('Failed to load blank page:', err);
       });
     } else {
-      // Handle regular URLs
-      browserView.webContents.loadURL(url).catch(err => {
-        browserView.webContents.loadURL('data:text/html,<h1>Failed to load page</h1><p>Please check your internet connection.</p>');
+      // Handle regular URLs with better error handling
+      browserView.webContents.loadURL(url).then(() => {
+        console.log('Successfully navigated to:', url, 'in tab:', tabId);
+      }).catch(err => {
+        console.error('Failed to load URL:', url, 'in tab:', tabId, err);
+        // Try fallback
+        browserView.webContents.loadURL('data:text/html,<h1>Failed to load page</h1><p>Please check your internet connection.</p>').catch(fallbackErr => {
+          console.error('Fallback also failed:', fallbackErr);
+        });
       });
     }
+    return true;
+  } catch (error) {
+    console.error('Navigation error for tab:', tabId, error);
+    return false;
   }
 });
 

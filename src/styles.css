@@ -37,6 +37,7 @@ body {
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
     border-radius: 12px;
     margin: 8px;
+    position: relative;
     animation: containerFloat 6s ease-in-out infinite;
     position: relative;
     align-items: stretch;
@@ -2009,4 +2010,75 @@ body {
     background: rgba(66, 133, 244, 0.2);
     border-color: rgba(66, 133, 244, 0.5);
     transform: translateY(-1px);
+}
+
+/* Resize handles for frameless window */
+.resize-handle {
+    position: absolute;
+    background: transparent;
+    z-index: 1000;
+}
+
+.resize-handle-n {
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    cursor: n-resize;
+}
+
+.resize-handle-s {
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    cursor: s-resize;
+}
+
+.resize-handle-e {
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 4px;
+    cursor: e-resize;
+}
+
+.resize-handle-w {
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 4px;
+    cursor: w-resize;
+}
+
+.resize-handle-ne {
+    top: 0;
+    right: 0;
+    width: 8px;
+    height: 8px;
+    cursor: ne-resize;
+}
+
+.resize-handle-nw {
+    top: 0;
+    left: 0;
+    width: 8px;
+    height: 8px;
+    cursor: nw-resize;
+}
+
+.resize-handle-se {
+    bottom: 0;
+    right: 0;
+    width: 8px;
+    height: 8px;
+    cursor: se-resize;
+}
+
+.resize-handle-sw {
+    bottom: 0;
+    left: 0;
+    width: 8px;
+    height: 8px;
+    cursor: sw-resize;
 }

@@ -10,6 +10,9 @@ class StealthBrowser {
         this.tabs = new Map();
         this.isCreatingTab = false; // Flag to prevent duplicate tab creation
         this.isHandlingQuickLink = false; // Flag to prevent multiple quick link clicks
+        this.isNavigating = false; // Flag to prevent concurrent navigation
+        this.navigationQueue = []; // Queue for pending navigation requests
+        this.loadingStates = new Map(); // Track loading state per tab
         
         this.init();
     }
@@ -231,6 +234,9 @@ class StealthBrowser {
     setupBrowserViewListeners() {
         // Listen for BrowserView events from main process
         ipcRenderer.on('browser-view-loading', (event, { tabId, loading }) => {
+            // Update loading state for the tab
+            this.loadingStates.set(tabId, loading);
+            
             if (tabId === this.currentTabId) {
                 if (loading) {
                     this.showLoading();
@@ -239,6 +245,11 @@ class StealthBrowser {
                     this.hideLoading();
                     this.statusText.textContent = 'Ready';
                     this.updateNavigationButtons();
+                    
+                    // Process queued navigation requests when loading completes
+                    setTimeout(() => {
+                        this.processNavigationQueue();
+                    }, 500);
                 }
             }
         });
@@ -296,8 +307,50 @@ class StealthBrowser {
         return 'https://www.google.com/search?q=' + encodeURIComponent(input);
     }
 
-    navigateTo(url) {
-        ipcRenderer.invoke('browser-view-navigate', { tabId: this.currentTabId, url });
+    async navigateTo(url) {
+        // Check if we're already navigating
+        if (this.isNavigating) {
+            console.log('Navigation already in progress, queuing request:', url);
+            this.navigationQueue.push({ tabId: this.currentTabId, url });
+            return;
+        }
+
+        // Check if current tab is loading
+        const isLoading = this.loadingStates.get(this.currentTabId);
+        if (isLoading) {
+            console.log('Tab is currently loading, queuing navigation request:', url);
+            this.navigationQueue.push({ tabId: this.currentTabId, url });
+            return;
+        }
+
+        try {
+            this.isNavigating = true;
+            console.log('Navigating to:', url, 'in tab:', this.currentTabId);
+            
+            await ipcRenderer.invoke('browser-view-navigate', { tabId: this.currentTabId, url });
+            
+            // Process queued navigation requests after a short delay
+            setTimeout(() => {
+                this.processNavigationQueue();
+            }, 1000);
+            
+        } catch (error) {
+            console.error('Navigation failed:', error);
+        } finally {
+            this.isNavigating = false;
+        }
+    }
+
+    async processNavigationQueue() {
+        if (this.navigationQueue.length === 0 || this.isNavigating) {
+            return;
+        }
+
+        const nextNavigation = this.navigationQueue.shift();
+        if (nextNavigation) {
+            console.log('Processing queued navigation:', nextNavigation.url);
+            await this.navigateTo(nextNavigation.url);
+        }
     }
 
     updateAddressBar() {
