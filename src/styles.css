@@ -506,6 +506,21 @@ body {
     transform: translateY(-1px);
 }
 
+/* Quick Navigation Buttons */
+.quick-nav-btn {
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+}
+
+.quick-nav-btn:hover {
+    background: linear-gradient(135deg, #9bb5f9 0%, #7680eb 100%);
+    transform: translateY(-1px) scale(1.05);
+    box-shadow: 0 4px 12px rgba(138, 180, 248, 0.4);
+}
+
 .stealth-btn.active {
     background: linear-gradient(135deg, #8b5cf6, #7c3aed);
     box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3);
@@ -920,18 +935,20 @@ body {
 .blank-page-overlay {
     position: fixed;
     top: 128px; /* Start below tab bar and navigation */
-    left: 0;
-    right: 0;
-    bottom: 32px; /* Leave space for status bar */
+    left: 8px; /* Account for browser container margin */
+    right: 8px; /* Account for browser container margin */
+    bottom: 40px; /* Leave space for status bar */
     background: #1a1a1a;
+    border: 2px solid #8ab4f8; /* Temporary border to make overlay visible */
     color: #ffffff;
-    display: none; /* Hidden by default */
+    display: flex; /* Show by default for new tabs */
     align-items: center;
     justify-content: center;
-    z-index: 1000;
+    z-index: 99999; /* Much higher z-index to ensure it's on top of everything */
     padding: 40px;
     box-sizing: border-box;
-    pointer-events: none; /* Allow clicks to pass through to BrowserView */
+    pointer-events: auto; /* Enable clicks on the overlay */
+    border-radius: 12px; /* Match browser container border radius */
 }
 
 .blank-content {
@@ -995,6 +1012,78 @@ body {
 
 .hotkey-desc {
     color: #e8eaed;
+    font-size: 0.9rem;
+}
+
+/* Quick Links */
+.quick-links {
+    margin: 40px 0;
+}
+
+.quick-links h2 {
+    color: #8ab4f8;
+    font-size: 1.5rem;
+    margin-bottom: 20px;
+    font-weight: 500;
+}
+
+.quick-links-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 15px;
+    margin-top: 20px;
+}
+
+.quick-link {
+    display: flex;
+    align-items: center;
+    background: rgba(255, 255, 255, 0.1);
+    padding: 20px;
+    border-radius: 12px;
+    border: 2px solid rgba(138, 180, 248, 0.3);
+    text-decoration: none;
+    color: inherit;
+    transition: all 0.3s ease;
+    cursor: pointer;
+    pointer-events: auto; /* Enable clicks on quick links */
+    position: relative;
+    z-index: 10000;
+}
+
+.quick-link:hover {
+    background: rgba(255, 255, 255, 0.1);
+    transform: translateY(-3px);
+    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+    border-color: rgba(138, 180, 248, 0.3);
+}
+
+.quick-link-icon {
+    font-size: 2rem;
+    margin-right: 15px;
+    width: 50px;
+    height: 50px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(138, 180, 248, 0.1);
+    border-radius: 10px;
+    border: 1px solid rgba(138, 180, 248, 0.2);
+}
+
+.quick-link-text {
+    flex: 1;
+    text-align: left;
+}
+
+.quick-link-title {
+    color: #e8eaed;
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin-bottom: 5px;
+}
+
+.quick-link-desc {
+    color: #9aa0a6;
     font-size: 0.9rem;
 }
 

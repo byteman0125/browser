@@ -9,6 +9,7 @@ class StealthBrowser {
         this.currentTabId = 0;
         this.tabs = new Map();
         this.isCreatingTab = false; // Flag to prevent duplicate tab creation
+        this.isHandlingQuickLink = false; // Flag to prevent multiple quick link clicks
         
         this.init();
     }
@@ -167,6 +168,13 @@ class StealthBrowser {
             this.setStealthMode(enabled);
         });
 
+        // Handle tab restoration
+        ipcRenderer.on('tab-restored', (event, { tabId, url, title }) => {
+            console.log('Tab restored:', { tabId, url, title });
+            this.tabs.set(tabId, { id: tabId, title, url });
+            this.createTabElement(tabId);
+        });
+
         // Listen for global keyboard shortcuts from main process
         ipcRenderer.on('create-new-tab', () => {
             console.log('Received create-new-tab from main process');
@@ -178,16 +186,19 @@ class StealthBrowser {
             this.closeCurrentTab();
         });
 
-         // Hide browser when clicking on empty areas
-         const browserContainer = document.querySelector('.browser-container');
-         if (browserContainer) {
-             browserContainer.addEventListener('click', (e) => {
-                 // Only hide if clicking on the container itself, not on interactive elements
-                 if (e.target === browserContainer) {
-                     ipcRenderer.invoke('hide-browser');
-                 }
-             });
-         }
+        // Handle quick navigation buttons
+        this.setupQuickNavButtons();
+
+        // Hide browser when clicking on empty areas
+        const browserContainer = document.querySelector('.browser-container');
+        if (browserContainer) {
+            browserContainer.addEventListener('click', (e) => {
+                // Only hide if clicking on the container itself, not on interactive elements
+                if (e.target === browserContainer) {
+                    ipcRenderer.invoke('hide-browser');
+                }
+            });
+        }
 
     }
 
@@ -426,6 +437,9 @@ class StealthBrowser {
         if (firstTab) {
             firstTab.classList.add('active');
         }
+        
+        // Show the blank page overlay for the new tab
+        this.toggleBlankPageOverlay(true);
     }
 
     // Tab management methods
@@ -906,6 +920,84 @@ class StealthBrowser {
             }
         } catch (error) {
             console.error('Error getting current tab URL:', error);
+        }
+    }
+
+    // Setup quick navigation buttons
+    setupQuickNavButtons() {
+        const quickNavButtons = document.querySelectorAll('.quick-nav-btn');
+        console.log('Setting up quick nav buttons:', quickNavButtons.length);
+        quickNavButtons.forEach((button, index) => {
+            const url = button.getAttribute('data-url');
+            console.log(`Quick nav button ${index}:`, url, button);
+            
+            // Add click event listener
+            button.addEventListener('click', async (e) => {
+                console.log('Quick nav button click event triggered!', e);
+                e.preventDefault();
+                e.stopPropagation();
+                console.log('Quick nav button clicked:', url);
+                await this.handleQuickLinkClick(url);
+            });
+        });
+    }
+
+    async handleQuickLinkClick(url) {
+        // Prevent multiple rapid clicks
+        if (this.isHandlingQuickLink) {
+            console.log('Already handling quick link, ignoring click');
+            return;
+        }
+        
+        this.isHandlingQuickLink = true;
+        
+        try {
+            console.log('Handling quick link click for URL:', url);
+            
+            // Add a small delay to prevent race conditions
+            await new Promise(resolve => setTimeout(resolve, 100));
+            
+            // Check if current tab is a new tab (blank page)
+            const currentUrl = await ipcRenderer.invoke('get-current-tab-url', this.currentTabId);
+            const isCurrentTabNew = currentUrl === '' || currentUrl === null;
+            
+            console.log('Current tab URL:', currentUrl, 'Is new tab:', isCurrentTabNew);
+            
+            if (isCurrentTabNew) {
+                // Current tab is new tab - navigate in current tab
+                console.log('Navigating in current tab (new tab)');
+                this.navigateTo(url);
+            } else {
+                // Current tab is not new - check if target URL already exists in another tab
+                console.log('Checking for existing tab with URL:', url);
+                const existingTabId = await ipcRenderer.invoke('find-tab-with-url', url);
+                
+                if (existingTabId !== null) {
+                    // Target URL already exists - switch to that tab
+                    console.log('Switching to existing tab:', existingTabId);
+                    await this.switchToTab(existingTabId);
+                } else {
+                    // Target URL doesn't exist - create new tab
+                    console.log('Creating new tab for URL:', url);
+                    await this.createNewTab(url);
+                }
+            }
+        } catch (error) {
+            console.error('Error handling quick link click:', error);
+            console.error('Error details:', error.message, error.stack);
+            
+            // Fallback to simple navigation
+            console.log('Falling back to simple navigation');
+            try {
+                this.navigateTo(url);
+            } catch (fallbackError) {
+                console.error('Fallback navigation also failed:', fallbackError);
+            }
+        } finally {
+            // Reset the flag after a delay
+            setTimeout(() => {
+                this.isHandlingQuickLink = false;
+            }, 500);
         }
     }
 

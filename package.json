@@ -6,6 +6,8 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
+    "watchdog": "node watchdog.js",
+    "start-with-watchdog": "node watchdog.js",
     "build": "electron-builder",
     "build-win": "electron-builder --win",
     "build-installer": "electron-builder --win nsis",
@@ -35,7 +37,17 @@
     },
     "forceCodeSigning": false,
     "win": {
-      "target": "portable",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "assets/icon.ico",
       "requestedExecutionLevel": "asInvoker"
     },
     "files": [
@@ -51,7 +63,9 @@
       "shortcutName": "StealthBrowser",
       "deleteAppDataOnUninstall": false,
       "runAfterFinish": true,
-      "artifactName": "StealthBrowser-Setup-${version}.exe"
+      "artifactName": "StealthBrowser-Setup-${version}.exe",
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico"
     },
     "linux": {
       "target": "AppImage",
@@ -62,7 +76,7 @@
       "icon": "assets/icon.icns"
     },
     "portable": {
-      "artifactName": "StealthBrowser-Portable.exe"
+      "artifactName": "StealthBrowser-Portable-${version}.exe"
     }
   }
 }

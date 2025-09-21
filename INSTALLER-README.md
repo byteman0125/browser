@@ -2,31 +2,23 @@
 
 ## Quick Start
 
-### Method 1: Automated Script (Recommended)
+### Method 1: Automated Windows Build (Recommended)
 ```bash
-node create-installer.js
+build-windows.bat
 ```
 
 ### Method 2: Manual Commands
 ```bash
-# Clean previous builds
-npm run clean
-
 # Install dependencies
 npm install
 
-# Build installer
-npm run build-installer
+# Build Windows installer and portable version
+npm run build-win
 ```
 
-### Method 3: Batch File (Windows)
+### Method 3: Node.js Script
 ```bash
-build-installer.bat
-```
-
-### Method 4: PowerShell Script (Windows)
-```powershell
-.\build-installer.ps1
+node create-installer.js
 ```
 
 ## What Gets Created

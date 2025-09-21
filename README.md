@@ -23,11 +23,26 @@ A lightweight, privacy-focused web browser built with Electron featuring stealth
 
 ## Hotkeys
 
-- `Ctrl+Shift + Right Arrow`: Move window to the right
-- `Ctrl+Shift + Left Arrow`: Move window to the left
-- `Ctrl+Shift + Up Arrow`: Increase window transparency
-- `Ctrl+Shift + Down Arrow`: Decrease window transparency
-- `Ctrl+Shift + .`: Hide/show the browser window
+### Window Control
+- `Ctrl+Alt + Right Arrow`: Move window to the right
+- `Ctrl+Alt + Left Arrow`: Move window to the left
+- `Ctrl+Alt + Up Arrow`: Increase opacity (less transparent)
+- `Ctrl+Alt + Down Arrow`: Decrease opacity (more transparent)
+- `Ctrl+Alt + .`: Hide/show the browser window
+
+### Window Sizing
+- `Ctrl+Alt + 1`: Small window (800x600)
+- `Ctrl+Alt + 2`: Medium window (1200x800)
+- `Ctrl+Alt + 3`: Large window (1600x1000)
+- `Ctrl+Alt + 4`: Toggle fullscreen
+- `Ctrl+Alt + 5`: Toggle maximize
+
+### Tab Management
+- `Ctrl+T`: Create new tab
+- `Ctrl+W`: Close current tab
+
+### Special Features
+- `Ctrl+Shift + ` `: Screen capture mode
 - `Ctrl+F`: Open search in page
 - `Escape`: Close modals
 
@@ -97,16 +112,53 @@ A lightweight, privacy-focused web browser built with Electron featuring stealth
    npm start
    ```
 
-### Building Portable Executable
-1. Build for your platform:
-   ```bash
-   # For Windows
-   npm run build-win
-   
-   # For Linux
-   npm run build
-   ```
-2. Find the portable executable in the `dist` folder
+### Building for Windows (No Node.js Required)
+
+#### Quick Build (Recommended)
+```bash
+# Run the automated Windows build script
+build-windows.bat
+```
+
+#### Manual Build
+```bash
+# Install dependencies
+npm install
+
+# Build Windows installer and portable version
+npm run build-win
+```
+
+#### What Gets Created
+After building, you'll find in the `dist/` folder:
+- **`StealthBrowser-Setup-1.0.0.exe`** - Professional Windows installer (72MB)
+- **`StealthBrowser-Portable-1.0.0.exe`** - Portable version (72MB)
+
+#### Installer Features
+- ✅ Professional installation wizard
+- ✅ Custom installation directory selection
+- ✅ Desktop shortcut creation
+- ✅ Start menu integration
+- ✅ Auto-launch on system startup
+- ✅ Easy uninstallation
+- ✅ No admin privileges required
+- ✅ Single executable file
+- ✅ Custom icon matching main window
+
+#### Portable Version
+- ✅ No installation required
+- ✅ Run from any location
+- ✅ No system modifications
+- ✅ Perfect for USB drives
+
+### Building for Other Platforms
+```bash
+# For Linux
+npm run build
+
+# For macOS
+npm run build -- --mac
+```
 
 ## Stealth Features
 
