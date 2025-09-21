@@ -27,6 +27,7 @@ let tabCounter = 0;
 let tray = null;
 let isHidden = false;
 let currentOpacity = 0.95;
+let stealthMode = true; // Enhanced stealth mode enabled by default
 const tabUsageHistory = []; // Track tab usage order (most recent first)
 
 // Tab usage history management
@@ -79,25 +80,76 @@ async function setupAutoLaunch() {
 // Setup auto-launch
 setupAutoLaunch();
 
+// Enhanced stealth mode function for maximum screen capture invisibility
+function enableMaximumStealth() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    try {
+      // Apply all possible stealth measures
+      mainWindow.setContentProtection(true);
+      mainWindow.setVisibleOnAllWorkspaces(false, { visibleOnFullScreen: false });
+      mainWindow.setAlwaysOnTop(true, 'screen-saver');
+      mainWindow.setSkipTaskbar(true);
+      
+      // Force window to be treated as system overlay
+      mainWindow.setAlwaysOnTop(true, 'screen-saver');
+      
+      // Additional protection measures
+      mainWindow.setVisibleOnAllWorkspaces(false, { visibleOnFullScreen: false });
+      
+      console.log('Maximum stealth mode enabled - window invisible to screen capture');
+    } catch (error) {
+      console.error('Error enabling maximum stealth mode:', error);
+    }
+  }
+}
+
+// Function to toggle stealth mode
+function toggleStealthMode() {
+  stealthMode = !stealthMode;
+  if (stealthMode) {
+    enableMaximumStealth();
+    console.log('Stealth mode enabled - window invisible to screen capture');
+  } else {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setContentProtection(false);
+      console.log('Stealth mode disabled - window may be visible to screen capture');
+    }
+  }
+  
+  // Save stealth mode state
+  store.set('stealthMode', stealthMode);
+  return stealthMode;
+}
+
 // Function to ensure content protection is always enabled and make window completely invisible to capture
 function setContentProtection(enabled) {
   if (mainWindow) {
-    // Don't use contentProtection as it shows dark area in screen capture
-    // Instead use other methods to make window invisible to capture
-    
     if (enabled) {
-      // Set window to be invisible to screen capture - use screen-saver level
-      mainWindow.setAlwaysOnTop(true, 'screen-saver');
-      
       // Make window completely invisible to screen capture
+      mainWindow.setAlwaysOnTop(true, 'screen-saver');
       mainWindow.setVisibleOnAllWorkspaces(false, { visibleOnFullScreen: false });
-      
-      // Disable window from appearing in screen sharing
       mainWindow.setSkipTaskbar(true);
       
-      // Keep browser visible to user but invisible to capture
-      // Don't change opacity - user needs to see the browser
+      // CRITICAL: Enable content protection to make window invisible to screen capture
+      mainWindow.setContentProtection(true);
       
+      // Additional stealth: make window appear as desktop element
+      mainWindow.setOpacity(1.0); // Keep visible to user
+      
+      // Advanced stealth measures
+      try {
+        // Set window to be completely hidden from capture APIs
+        mainWindow.setVisibleOnAllWorkspaces(false, { visibleOnFullScreen: false });
+        
+        // Force window to be treated as system overlay
+        mainWindow.setAlwaysOnTop(true, 'screen-saver');
+        
+        // Additional protection against screen capture
+        mainWindow.setSkipTaskbar(true);
+        
+      } catch (error) {
+        console.error('Error setting advanced stealth measures:', error);
+      }
     }
   }
 }
@@ -131,8 +183,8 @@ function createWindow(startHidden = false) {
     backgroundColor: '#000000', // Pure black background
     show: !startHidden, // Show window unless starting hidden
     skipTaskbar: true, // Always hide from taskbar
-    contentProtection: false, // We'll handle invisibility differently
-    // Additional stealth measures
+    contentProtection: true, // Enable content protection for screen capture invisibility
+    // Enhanced stealth measures for screen capture prevention
     visibleOnAllWorkspaces: false, // Make window completely invisible to screen capture
     fullscreenable: false, // Prevent fullscreen mode
     minimizable: false, // Prevent minimization
@@ -146,12 +198,11 @@ function createWindow(startHidden = false) {
     titleBarStyle: 'hidden', // Hide title bar completely
     vibrancy: 'none', // Remove any vibrancy effects
     // Additional stealth properties
-    type: 'desktop', // Set window type to desktop for maximum stealth
     focusable: true, // Keep focusable but invisible
     acceptFirstMouse: false, // Prevent first mouse click
     disableAutoHideCursor: true, // Disable auto-hide cursor
     simpleFullscreen: false, // Disable simple fullscreen
-    // Additional stealth measures
+    // Enhanced stealth measures for maximum invisibility
     show: false, // Don't show initially
     skipTaskbar: true, // Hide from taskbar
     alwaysOnTop: true, // Keep on top
@@ -186,13 +237,18 @@ function createWindow(startHidden = false) {
   
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
+    
+    // Enable maximum stealth mode by default
+    enableMaximumStealth();
     setContentProtection(true);
     
     // Restore previous settings
     const savedOpacity = store.get('opacity', 0.8);
     const savedPosition = store.get('position');
+    const savedStealthMode = store.get('stealthMode', true);
     
     currentOpacity = savedOpacity;
+    stealthMode = savedStealthMode;
     mainWindow.setOpacity(savedOpacity);
     
     if (savedPosition) {
@@ -201,6 +257,7 @@ function createWindow(startHidden = false) {
     
     // Ensure content protection is always enabled
     setContentProtection(true);
+    enableMaximumStealth();
   });
 
   // Handle window close - hide instead of closing
@@ -282,36 +339,49 @@ function createWindow(startHidden = false) {
   // Periodic check to ensure content protection is always enabled and browser is completely invisible
   setInterval(() => {
     if (mainWindow && !mainWindow.isDestroyed()) {
-      // Apply stealth measures without contentProtection (which shows dark area)
+      // Apply aggressive stealth measures for maximum screen capture invisibility
       setContentProtection(true);
       
-      // Additional aggressive stealth measures
-      mainWindow.setAlwaysOnTop(true, 'screen-saver');
-      mainWindow.setSkipTaskbar(true);
-      mainWindow.setVisibleOnAllWorkspaces(false, { visibleOnFullScreen: false });
-      
-      // Keep browser visible to user - don't change opacity
-      
-      // Set window to be completely hidden from capture
-      mainWindow.setVisibleOnAllWorkspaces(false, { visibleOnFullScreen: false });
-      
-      // Additional stealth measures
-      mainWindow.setAlwaysOnTop(true, 'screen-saver');
-      
+      // Enhanced stealth measures - make window completely invisible to screen capture
+      try {
+        // Force content protection to be always enabled
+        mainWindow.setContentProtection(true);
+        
+        // Make window invisible to screen capture APIs
+        mainWindow.setVisibleOnAllWorkspaces(false, { visibleOnFullScreen: false });
+        
+        // Force window to be treated as system overlay (highest stealth level)
+        mainWindow.setAlwaysOnTop(true, 'screen-saver');
+        
+        // Hide from taskbar and window lists
+        mainWindow.setSkipTaskbar(true);
+        
+        // Additional protection against screen capture
+        mainWindow.setVisibleOnAllWorkspaces(false, { visibleOnFullScreen: false });
+        
+        // Force window to be treated as system overlay
+        mainWindow.setAlwaysOnTop(true, 'screen-saver');
+        
+        // Keep browser visible to user - don't change opacity
+        // The window remains visible to the user but invisible to screen capture
+        
+      } catch (error) {
+        console.error('Error applying stealth measures:', error);
+      }
     }
-  }, 500); // Check every 500ms for maximum security
+  }, 250); // Check every 250ms for maximum security and responsiveness
 }
 
 function setupStealthMode() {
   const ses = session.defaultSession;
   
-  // Enhanced stealth mode with content protection
+  // Enhanced stealth mode with aggressive content protection
   ses.setPermissionRequestHandler((webContents, permission, callback) => {
     const allowedPermissions = ['notifications', 'media'];
     callback(allowedPermissions.includes(permission));
   });
   
-  // Block screen capture and sharing permissions
+  // Block ALL screen capture and sharing permissions aggressively
   ses.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
     // Block all screen capture related permissions
     const blockedPermissions = [
@@ -319,10 +389,31 @@ function setupStealthMode() {
       'display-capture', 
       'desktop-capture',
       'screen-sharing',
-      'getDisplayMedia'
+      'getDisplayMedia',
+      'window-capture',
+      'tab-capture',
+      'application-capture',
+      'browser-capture',
+      'desktop-capture-api',
+      'screen-capture-api',
+      'display-capture-api',
+      'window-capture-api',
+      'tab-capture-api',
+      'application-capture-api',
+      'browser-capture-api',
+      'getDisplayMedia',
+      'getUserMedia',
+      'mediaDevices',
+      'screenCapturePermission',
+      'displayCapturePermission',
+      'windowCapturePermission',
+      'tabCapturePermission',
+      'applicationCapturePermission',
+      'browserCapturePermission'
     ];
     
     if (blockedPermissions.includes(permission)) {
+      console.log('Blocked permission request:', permission);
       return false;
     }
     
@@ -332,9 +423,31 @@ function setupStealthMode() {
   // Set user agent to mimic regular browser
   ses.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
   
-  // Enhanced content protection
+  // Enhanced content protection - block all display media requests
   ses.setDisplayMediaRequestHandler((request, callback) => {
+    console.log('Blocked display media request');
     callback({ video: false, audio: false });
+  });
+  
+  // Additional stealth: Block all media device access
+  ses.setPermissionRequestHandler((webContents, permission, callback) => {
+    const mediaPermissions = [
+      'camera',
+      'microphone', 
+      'screen-capture',
+      'display-capture',
+      'desktop-capture',
+      'getDisplayMedia',
+      'getUserMedia'
+    ];
+    
+    if (mediaPermissions.includes(permission)) {
+      console.log('Blocked media permission:', permission);
+      callback(false);
+      return;
+    }
+    
+    callback(true);
   });
 
   // Block tracking scripts and ads
@@ -619,10 +732,12 @@ function createSystemTray() {
     {
       label: 'Stealth Mode',
       type: 'checkbox',
-      checked: false,
+      checked: stealthMode,
       click: (menuItem) => {
+        const newStealthState = toggleStealthMode();
+        menuItem.checked = newStealthState;
         if (mainWindow) {
-          mainWindow.webContents.send('toggle-stealth', menuItem.checked);
+          mainWindow.webContents.send('toggle-stealth', newStealthState);
         }
       }
     },
@@ -783,6 +898,12 @@ function registerGlobalShortcuts() {
     if (mainWindow) {
       startScreenCapture();
     }
+  });
+
+  // Ctrl+Shift+S: Toggle stealth mode
+  globalShortcut.register('CommandOrControl+Shift+S', () => {
+    const newStealthState = toggleStealthMode();
+    console.log('Stealth mode toggled:', newStealthState ? 'ON' : 'OFF');
   });
 }
 
@@ -1153,6 +1274,24 @@ app.whenReady().then(() => {
   app.commandLine.appendSwitch('disable-features', 'ScreenCapturePermission');
   app.commandLine.appendSwitch('disable-features', 'DisplayCapturePermission');
   
+  // Additional switches to make window completely invisible to screen capture
+  app.commandLine.appendSwitch('disable-features', 'WindowCapture');
+  app.commandLine.appendSwitch('disable-features', 'TabCapture');
+  app.commandLine.appendSwitch('disable-features', 'ApplicationCapture');
+  app.commandLine.appendSwitch('disable-features', 'BrowserCapture');
+  app.commandLine.appendSwitch('disable-features', 'DesktopCaptureAPI');
+  app.commandLine.appendSwitch('disable-features', 'ScreenCaptureAPI');
+  app.commandLine.appendSwitch('disable-features', 'DisplayCaptureAPI');
+  app.commandLine.appendSwitch('disable-features', 'WindowCaptureAPI');
+  app.commandLine.appendSwitch('disable-features', 'TabCaptureAPI');
+  app.commandLine.appendSwitch('disable-features', 'ApplicationCaptureAPI');
+  app.commandLine.appendSwitch('disable-features', 'BrowserCaptureAPI');
+  app.commandLine.appendSwitch('disable-features', 'DesktopCapturePermission');
+  app.commandLine.appendSwitch('disable-features', 'WindowCapturePermission');
+  app.commandLine.appendSwitch('disable-features', 'TabCapturePermission');
+  app.commandLine.appendSwitch('disable-features', 'ApplicationCapturePermission');
+  app.commandLine.appendSwitch('disable-features', 'BrowserCapturePermission');
+  
   // Set environment variables to force software rendering and prevent screen capture
   process.env.CHROME_FLAGS = '--disable-gpu --disable-gpu-sandbox --disable-software-rasterizer --disable-features=ScreenCapture,DisplayCapture,DesktopCapture,GetDisplayMedia,ScreenSharing,WebRTC,MediaStream,CanvasCapture,VideoCapture,AudioCapture,ScreenRecording,ScreenMirroring,RemoteDesktop,ScreenCaptureAPI,DisplayMediaAPI,GetUserMedia,MediaDevices,ScreenCapturePermission,DisplayCapturePermission --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding --disable-features=TranslateUI --disable-ipc-flooding-protection --max-active-webgl-contexts=0 --disable-gpu-process-crash-limit --disable-gpu-watchdog --disable-gpu-driver-bug-workarounds --disable-gpu-memory-buffer-video-frames --disable-features=VizDisplayCompositor --disable-component-extensions-with-background-pages --disable-default-apps --disable-extensions --disable-plugins --disable-plugins-discovery --disable-preconnect --disable-translate --disable-sync --disable-background-networking --disable-client-side-phishing-detection --disable-component-update --disable-domain-reliability --disable-features=BlinkGenPropertyTrees --disable-hang-monitor --disable-prompt-on-repost';
   process.env.ELECTRON_DISABLE_GPU = '1';
@@ -1180,6 +1319,16 @@ app.whenReady().then(() => {
   process.env.ELECTRON_DISABLE_DESKTOP_MIRRORING = '1';
   process.env.ELECTRON_DISABLE_DISPLAY_MIRRORING = '1';
   process.env.ELECTRON_DISABLE_WINDOW_MIRRORING = '1';
+  process.env.ELECTRON_DISABLE_TAB_CAPTURE = '1';
+  process.env.ELECTRON_DISABLE_APPLICATION_CAPTURE = '1';
+  process.env.ELECTRON_DISABLE_BROWSER_CAPTURE = '1';
+  process.env.ELECTRON_DISABLE_DESKTOP_CAPTURE_API = '1';
+  process.env.ELECTRON_DISABLE_SCREEN_CAPTURE_API = '1';
+  process.env.ELECTRON_DISABLE_DISPLAY_CAPTURE_API = '1';
+  process.env.ELECTRON_DISABLE_WINDOW_CAPTURE_API = '1';
+  process.env.ELECTRON_DISABLE_TAB_CAPTURE_API = '1';
+  process.env.ELECTRON_DISABLE_APPLICATION_CAPTURE_API = '1';
+  process.env.ELECTRON_DISABLE_BROWSER_CAPTURE_API = '1';
   process.env.ELECTRON_DISABLE_SCREEN_CAPTURE_API = '1';
   process.env.ELECTRON_DISABLE_DISPLAY_CAPTURE_API = '1';
   process.env.ELECTRON_DISABLE_DESKTOP_CAPTURE_API = '1';

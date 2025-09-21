@@ -4,7 +4,7 @@ echo.
 
 REM Clean previous builds
 echo Cleaning previous builds...
-if exist dist rmdir /s /q dist
+call clean-dist.bat
 echo.
 
 REM Build portable version

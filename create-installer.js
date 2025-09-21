@@ -29,9 +29,9 @@ if (!fs.existsSync('assets/icon.ico') && !fs.existsSync('assets/icon.png')) {
 
 console.log('\n🧹 Cleaning previous builds...');
 try {
-    execSync('npm run clean', { stdio: 'inherit' });
+    execSync('clean-dist.bat', { stdio: 'inherit' });
 } catch (error) {
-    console.log('ℹ️  No previous builds to clean');
+    console.log('ℹ️  Clean completed (some files may be locked)');
 }
 
 console.log('\n📦 Installing dependencies...');

@@ -13,7 +13,7 @@
     "build-simple": "electron-builder --win portable --config.win.target=portable",
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
-    "clean": "rimraf dist"
+    "clean": "rimraf dist || rmdir /s /q dist 2>nul || echo Clean completed"
   },
   "keywords": ["browser", "electron", "stealth", "privacy"],
   "author": "StealthBrowser",
@@ -33,24 +33,16 @@
     "directories": {
       "output": "dist"
     },
+    "forceCodeSigning": false,
+    "win": {
+      "target": "portable",
+      "requestedExecutionLevel": "asInvoker"
+    },
     "files": [
       "src/**/*",
       "assets/**/*",
       "node_modules/**/*"
     ],
-    "win": {
-      "target": [
-        {
-          "target": "nsis",
-          "arch": ["x64"]
-        },
-        {
-          "target": "portable",
-          "arch": ["x64"]
-        }
-      ],
-      "requestedExecutionLevel": "asInvoker"
-    },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
@@ -59,8 +51,7 @@
       "shortcutName": "StealthBrowser",
       "deleteAppDataOnUninstall": false,
       "runAfterFinish": true,
-      "artifactName": "StealthBrowser-Setup-${version}.exe",
-      "sign": false
+      "artifactName": "StealthBrowser-Setup-${version}.exe"
     },
     "linux": {
       "target": "AppImage",

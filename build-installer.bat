@@ -4,7 +4,7 @@ echo.
 
 REM Clean previous builds
 echo Cleaning previous builds...
-call npm run clean
+call clean-dist.bat
 echo.
 
 REM Install dependencies
