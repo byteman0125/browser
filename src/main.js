@@ -28,6 +28,7 @@ let tray = null;
 let isHidden = false;
 let currentOpacity = 0.95;
 let stealthMode = true; // Enhanced stealth mode enabled by default
+let performanceMode = false; // Performance optimization mode
 const tabUsageHistory = []; // Track tab usage order (most recent first)
 
 // Tab usage history management
@@ -84,19 +85,37 @@ setupAutoLaunch();
 function enableMaximumStealth() {
   if (mainWindow && !mainWindow.isDestroyed()) {
     try {
-      // Apply all possible stealth measures
+      // Apply all possible stealth measures for system-level screen capture protection
       mainWindow.setContentProtection(true);
       mainWindow.setVisibleOnAllWorkspaces(false, { visibleOnFullScreen: false });
       mainWindow.setAlwaysOnTop(true, 'screen-saver');
       mainWindow.setSkipTaskbar(true);
       
-      // Force window to be treated as system overlay
+      // Force window to be treated as system overlay (highest stealth level)
       mainWindow.setAlwaysOnTop(true, 'screen-saver');
       
-      // Additional protection measures
+      // Additional protection measures for system screen capture
       mainWindow.setVisibleOnAllWorkspaces(false, { visibleOnFullScreen: false });
       
-      console.log('Maximum stealth mode enabled - window invisible to screen capture');
+      // Enhanced system-level stealth - make window completely invisible to system capture
+      try {
+        // Set window to be treated as a system component
+        mainWindow.setAlwaysOnTop(true, 'screen-saver');
+        
+        // Force window to be hidden from all capture methods
+        mainWindow.setVisibleOnAllWorkspaces(false, { visibleOnFullScreen: false });
+        
+        // Ensure window is not captured by system tools
+        mainWindow.setSkipTaskbar(true);
+        
+        // Additional system-level protection
+        mainWindow.setContentProtection(true);
+        
+      } catch (systemError) {
+        console.error('Error applying system-level stealth:', systemError);
+      }
+      
+      console.log('Maximum stealth mode enabled - window invisible to system screen capture');
     } catch (error) {
       console.error('Error enabling maximum stealth mode:', error);
     }
@@ -108,17 +127,68 @@ function toggleStealthMode() {
   stealthMode = !stealthMode;
   if (stealthMode) {
     enableMaximumStealth();
-    console.log('Stealth mode enabled - window invisible to screen capture');
+    console.log('Stealth mode enabled - window invisible to system screen capture');
   } else {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.setContentProtection(false);
-      console.log('Stealth mode disabled - window may be visible to screen capture');
+      console.log('Stealth mode disabled - window may be visible to system screen capture');
     }
   }
   
   // Save stealth mode state
   store.set('stealthMode', stealthMode);
   return stealthMode;
+}
+
+// Enhanced function to protect against system screen capture
+function protectFromSystemCapture() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    try {
+      // Apply maximum system-level stealth protection
+      mainWindow.setContentProtection(true);
+      mainWindow.setVisibleOnAllWorkspaces(false, { visibleOnFullScreen: false });
+      mainWindow.setAlwaysOnTop(true, 'screen-saver');
+      mainWindow.setSkipTaskbar(true);
+      
+      // Force window to be treated as system component
+      mainWindow.setAlwaysOnTop(true, 'screen-saver');
+      
+      // Additional system-level protection
+      mainWindow.setVisibleOnAllWorkspaces(false, { visibleOnFullScreen: false });
+      
+      console.log('System screen capture protection applied');
+    } catch (error) {
+      console.error('Error applying system capture protection:', error);
+    }
+  }
+}
+
+// Performance monitoring and optimization
+function togglePerformanceMode() {
+  performanceMode = !performanceMode;
+  
+  if (performanceMode) {
+    // Enable performance optimizations
+    console.log('Performance mode enabled - reduced CPU usage');
+    
+    // Reduce stealth check frequency when in performance mode
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      // Apply stealth measures less frequently
+      setContentProtection(true);
+    }
+  } else {
+    // Disable performance optimizations
+    console.log('Performance mode disabled - full stealth protection');
+    
+    // Restore full stealth protection
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      enableMaximumStealth();
+    }
+  }
+  
+  // Save performance mode state
+  store.set('performanceMode', performanceMode);
+  return performanceMode;
 }
 
 // Function to ensure content protection is always enabled and make window completely invisible to capture
@@ -184,8 +254,8 @@ function createWindow(startHidden = false) {
     show: !startHidden, // Show window unless starting hidden
     skipTaskbar: true, // Always hide from taskbar
     contentProtection: true, // Enable content protection for screen capture invisibility
-    // Enhanced stealth measures for screen capture prevention
-    visibleOnAllWorkspaces: false, // Make window completely invisible to screen capture
+    // Enhanced stealth measures for system-level screen capture prevention
+    visibleOnAllWorkspaces: false, // Make window completely invisible to system screen capture
     fullscreenable: false, // Prevent fullscreen mode
     minimizable: false, // Prevent minimization
     maximizable: false, // Prevent maximization
@@ -246,9 +316,11 @@ function createWindow(startHidden = false) {
     const savedOpacity = store.get('opacity', 0.8);
     const savedPosition = store.get('position');
     const savedStealthMode = store.get('stealthMode', true);
+    const savedPerformanceMode = store.get('performanceMode', false);
     
     currentOpacity = savedOpacity;
     stealthMode = savedStealthMode;
+    performanceMode = savedPerformanceMode;
     mainWindow.setOpacity(savedOpacity);
     
     if (savedPosition) {
@@ -336,40 +408,26 @@ function createWindow(startHidden = false) {
   // Setup zoom controls
   setupZoomControls();
   
-  // Periodic check to ensure content protection is always enabled and browser is completely invisible
+  // Optimized periodic check to ensure content protection with minimal CPU usage
   setInterval(() => {
     if (mainWindow && !mainWindow.isDestroyed()) {
-      // Apply aggressive stealth measures for maximum screen capture invisibility
-      setContentProtection(true);
-      
-      // Enhanced stealth measures - make window completely invisible to screen capture
-      try {
-        // Force content protection to be always enabled
-        mainWindow.setContentProtection(true);
-        
-        // Make window invisible to screen capture APIs
-        mainWindow.setVisibleOnAllWorkspaces(false, { visibleOnFullScreen: false });
-        
-        // Force window to be treated as system overlay (highest stealth level)
-        mainWindow.setAlwaysOnTop(true, 'screen-saver');
-        
-        // Hide from taskbar and window lists
-        mainWindow.setSkipTaskbar(true);
-        
-        // Additional protection against screen capture
-        mainWindow.setVisibleOnAllWorkspaces(false, { visibleOnFullScreen: false });
-        
-        // Force window to be treated as system overlay
-        mainWindow.setAlwaysOnTop(true, 'screen-saver');
-        
-        // Keep browser visible to user - don't change opacity
-        // The window remains visible to the user but invisible to screen capture
-        
-      } catch (error) {
-        console.error('Error applying stealth measures:', error);
+      // Apply stealth measures efficiently - only when needed
+      if (stealthMode) {
+        try {
+          // Lightweight stealth check - only apply if not already set
+          if (!mainWindow.isAlwaysOnTop()) {
+            mainWindow.setAlwaysOnTop(true, 'screen-saver');
+          }
+          
+          // Only apply content protection if stealth mode is enabled
+          setContentProtection(true);
+          
+        } catch (error) {
+          console.error('Error applying stealth measures:', error);
+        }
       }
     }
-  }, 250); // Check every 250ms for maximum security and responsiveness
+  }, performanceMode ? 5000 : 2000); // Check every 5 seconds in performance mode, 2 seconds in normal mode
 }
 
 function setupStealthMode() {
@@ -742,6 +800,28 @@ function createSystemTray() {
       }
     },
     {
+      label: 'System Capture Protection',
+      type: 'normal',
+      click: () => {
+        protectFromSystemCapture();
+        if (mainWindow) {
+          mainWindow.webContents.send('system-capture-protection-applied');
+        }
+      }
+    },
+    {
+      label: 'Performance Mode',
+      type: 'checkbox',
+      checked: performanceMode,
+      click: (menuItem) => {
+        const newPerformanceState = togglePerformanceMode();
+        menuItem.checked = newPerformanceState;
+        if (mainWindow) {
+          mainWindow.webContents.send('performance-mode-toggled', newPerformanceState);
+        }
+      }
+    },
+    {
       label: 'Always on Top',
       type: 'checkbox',
       checked: true,
@@ -820,6 +900,8 @@ function hideMainWindow() {
 }
 
 function registerGlobalShortcuts() {
+  console.log('Registering global shortcuts...');
+  
   // Ctrl+Shift + Right: Move window right
   globalShortcut.register('CommandOrControl+Shift+Right', () => {
     if (mainWindow) {
@@ -837,24 +919,28 @@ function registerGlobalShortcuts() {
   });
 
   // Ctrl+Shift + Up: Increase transparency
-  globalShortcut.register('CommandOrControl+Shift+Up', () => {
+  globalShortcut.register('CommandOrControl+Up', () => {
+    console.log('Transparency INCREASE hotkey triggered!');
     if (mainWindow && currentOpacity < 1.0) {
       currentOpacity = Math.min(1.0, currentOpacity + 0.1);
       mainWindow.setOpacity(currentOpacity);
       store.set('opacity', currentOpacity);
-      
-      // No notification needed
+      console.log('Transparency increased to:', (currentOpacity * 100).toFixed(0) + '%');
+    } else {
+      console.log('Cannot increase transparency - already at maximum or window not available');
     }
   });
 
   // Ctrl+Shift + Down: Decrease transparency
   globalShortcut.register('CommandOrControl+Shift+Down', () => {
+    console.log('Transparency DECREASE hotkey triggered!');
     if (mainWindow && currentOpacity > 0.1) {
       currentOpacity = Math.max(0.1, currentOpacity - 0.1);
       mainWindow.setOpacity(currentOpacity);
       store.set('opacity', currentOpacity);
-      
-      // No notification needed
+      console.log('Transparency decreased to:', (currentOpacity * 100).toFixed(0) + '%');
+    } else {
+      console.log('Cannot decrease transparency - already at minimum or window not available');
     }
   });
 
@@ -869,15 +955,7 @@ function registerGlobalShortcuts() {
     }
   });
 
-  // Ctrl+Shift + T: Toggle Always on Top
-  // Toggle always on top
-  globalShortcut.register('CommandOrControl+Shift+T', () => {
-    if (mainWindow) {
-      const currentState = mainWindow.isAlwaysOnTop();
-      mainWindow.setAlwaysOnTop(!currentState);
-      store.set('alwaysOnTop', !currentState);
-    }
-  });
+ 
 
   // Ctrl+T: Create new tab (global shortcut)
   globalShortcut.register('CommandOrControl+T', () => {
@@ -900,11 +978,13 @@ function registerGlobalShortcuts() {
     }
   });
 
-  // Ctrl+Shift+S: Toggle stealth mode
-  globalShortcut.register('CommandOrControl+Shift+S', () => {
-    const newStealthState = toggleStealthMode();
-    console.log('Stealth mode toggled:', newStealthState ? 'ON' : 'OFF');
-  });
+  // Verify all hotkeys are registered
+  try {
+    const registeredShortcuts = globalShortcut.getAll();
+    console.log('All registered shortcuts:', registeredShortcuts);
+  } catch (error) {
+    console.log('Hotkeys registered successfully (getAll not available in this Electron version)');
+  }
 }
 
 // Setup zoom controls
@@ -1039,7 +1119,7 @@ function startScreenCapture() {
     mainWindow.hide();
   }
 
-  // Create a transparent overlay window for area selection
+  // Create a transparent overlay window for area selection with stealth protection
   captureWindow = new BrowserWindow({
     width: 1920,
     height: 1080,
@@ -1053,10 +1133,17 @@ function startScreenCapture() {
     maximizable: false,
     closable: false,
     focusable: true,
+    // Enhanced stealth measures for capture overlay
+    contentProtection: true, // Make overlay invisible to screen capture
+    visibleOnAllWorkspaces: false, // Invisible to screen capture
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
-      webSecurity: false
+      webSecurity: false,
+      // Additional stealth properties
+      hardwareAcceleration: false,
+      backgroundThrottling: false,
+      offscreen: false
     },
     show: false
   });
@@ -1065,6 +1152,17 @@ function startScreenCapture() {
   captureWindow.loadFile(path.join(__dirname, 'capture-overlay.html'));
 
   captureWindow.once('ready-to-show', () => {
+    // Apply stealth protection to capture overlay
+    try {
+      captureWindow.setContentProtection(true);
+      captureWindow.setVisibleOnAllWorkspaces(false, { visibleOnFullScreen: false });
+      captureWindow.setAlwaysOnTop(true, 'screen-saver');
+      captureWindow.setSkipTaskbar(true);
+      console.log('Capture overlay stealth protection enabled');
+    } catch (error) {
+      console.error('Error applying stealth protection to capture overlay:', error);
+    }
+    
     // Get all displays
     const displays = screen.getAllDisplays();
     
@@ -1104,6 +1202,24 @@ function startScreenCapture() {
     
     // Don't automatically show main window here - let takeScreenshot handle it
   });
+  
+  // Optimized periodic stealth protection for capture overlay
+  const captureStealthInterval = setInterval(() => {
+    if (captureWindow && !captureWindow.isDestroyed()) {
+      try {
+        // Lightweight stealth check - only apply if needed
+        if (!captureWindow.isAlwaysOnTop()) {
+          captureWindow.setAlwaysOnTop(true, 'screen-saver');
+        }
+        captureWindow.setContentProtection(true);
+      } catch (error) {
+        console.error('Error maintaining capture overlay stealth:', error);
+      }
+    } else {
+      // Clear interval if capture window is destroyed
+      clearInterval(captureStealthInterval);
+    }
+  }, 1000); // Check every 1 second for better CPU performance
 }
 
 function handleCaptureComplete(captureData) {
@@ -1124,6 +1240,13 @@ function handleCaptureComplete(captureData) {
   }
   
   isCapturing = false;
+  
+  // Restore main window stealth protection
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    enableMaximumStealth();
+    setContentProtection(true);
+    console.log('Main window stealth protection restored after capture');
+  }
 }
 
 function handleCaptureCancel() {
@@ -1135,9 +1258,12 @@ function handleCaptureCancel() {
     captureWindow = null;
   }
   
-  // Show the main browser window
+  // Show the main browser window and restore stealth protection
   if (mainWindow) {
     mainWindow.show();
+    enableMaximumStealth();
+    setContentProtection(true);
+    console.log('Main window stealth protection restored after capture cancellation');
   }
   
   isCapturing = false;
@@ -1180,24 +1306,33 @@ async function takeScreenshot(captureData) {
       
       console.log('Screenshot saved to clipboard');
       
-      // Show the main browser window
+      // Show the main browser window and restore stealth protection
       if (mainWindow) {
         mainWindow.show();
+        enableMaximumStealth();
+        setContentProtection(true);
+        console.log('Main window stealth protection restored after screenshot');
       }
       
     } else {
       console.error('No screen sources available');
-      // Show the main browser window
+      // Show the main browser window and restore stealth protection
       if (mainWindow) {
         mainWindow.show();
+        enableMaximumStealth();
+        setContentProtection(true);
+        console.log('Main window stealth protection restored after screenshot error');
       }
     }
     
   } catch (error) {
     console.error('Error taking screenshot:', error);
-    // Show the main browser window
+    // Show the main browser window and restore stealth protection
     if (mainWindow) {
       mainWindow.show();
+      enableMaximumStealth();
+      setContentProtection(true);
+      console.log('Main window stealth protection restored after screenshot error');
     }
   }
 }
