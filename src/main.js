@@ -1391,6 +1391,66 @@ function hideMainWindow() {
   }
 }
 
+// Function to get element content at mouse cursor and copy to clipboard
+async function getElementContentAtMouse() {
+  try {
+    const { exec } = require('child_process');
+    const { clipboard } = require('electron');
+    
+    // PowerShell script to get element content at mouse position
+    const psScript = `
+      Add-Type -AssemblyName UIAutomationClient
+      Add-Type -AssemblyName System.Windows.Forms
+      
+      $point = [System.Windows.Forms.Cursor]::Position
+      $element = [System.Windows.Automation.AutomationElement]::FromPoint($point)
+      
+      if ($element -ne $null) {
+        $name = $element.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::NameProperty)
+        $value = $element.GetCurrentPropertyValue([System.Windows.Automation.ValuePattern]::ValueProperty)
+        $text = $element.GetCurrentPropertyValue([System.Windows.Automation.TextPattern]::TextProperty)
+        
+        $content = ""
+        if ($name -and $name.Trim() -ne "") { $content += "Name: $name" + [Environment]::NewLine }
+        if ($value -and $value.Trim() -ne "") { $content += "Value: $value" + [Environment]::NewLine }
+        if ($text -and $text.Trim() -ne "") { $content += "Text: $text" + [Environment]::NewLine }
+        
+        if ($content -eq "") {
+          $content = $name
+        }
+        
+        Write-Output $content.Trim()
+      } else {
+        Write-Output "No element found at cursor position"
+      }
+    `;
+    
+    exec(`powershell -Command "${psScript}"`, (error, stdout, stderr) => {
+      if (error) {
+        console.log('Error getting element content:', error);
+        return;
+      }
+      
+      const content = stdout.trim();
+      if (content && content !== "No element found at cursor position") {
+        // Copy to clipboard
+        clipboard.writeText(content);
+        console.log('Element content copied to clipboard:', content);
+        
+        // Show notification to user
+        if (mainWindow) {
+          mainWindow.webContents.send('element-content-copied', content);
+        }
+      } else {
+        console.log('No element content found at cursor position');
+      }
+    });
+    
+  } catch (err) {
+    console.log('Error in getElementContentAtMouse:', err);
+  }
+}
+
 function registerGlobalShortcuts() {
   console.log('Registering global shortcuts...');
   
@@ -1507,6 +1567,12 @@ function registerGlobalShortcuts() {
         `).catch(err => console.log('Scroll down failed:', err));
       }
     }
+  });
+
+  // Alt+C: Get element content at mouse cursor and copy to clipboard
+  globalShortcut.register('Alt+C', () => {
+    console.log('COPY ELEMENT CONTENT hotkey triggered!');
+    getElementContentAtMouse();
   });
 
   // Verify all hotkeys are registered
