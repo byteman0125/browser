@@ -32,19 +32,39 @@ app.on('will-quit', (event) => {
 // Clean up watchdog process on app exit
 app.on('before-quit', () => {
   stopWatchdogProcess();
+  // Clean up PID file
+  const browserPidFile = path.join(os.homedir(), '.stealthbrowser', 'browser.pid');
+  if (fs.existsSync(browserPidFile)) {
+    fs.unlinkSync(browserPidFile);
+  }
 });
 
 process.on('exit', () => {
   stopWatchdogProcess();
+  // Clean up PID file
+  const browserPidFile = path.join(os.homedir(), '.stealthbrowser', 'browser.pid');
+  if (fs.existsSync(browserPidFile)) {
+    fs.unlinkSync(browserPidFile);
+  }
 });
 
 process.on('SIGINT', () => {
   stopWatchdogProcess();
+  // Clean up PID file
+  const browserPidFile = path.join(os.homedir(), '.stealthbrowser', 'browser.pid');
+  if (fs.existsSync(browserPidFile)) {
+    fs.unlinkSync(browserPidFile);
+  }
   process.exit(0);
 });
 
 process.on('SIGTERM', () => {
   stopWatchdogProcess();
+  // Clean up PID file
+  const browserPidFile = path.join(os.homedir(), '.stealthbrowser', 'browser.pid');
+  if (fs.existsSync(browserPidFile)) {
+    fs.unlinkSync(browserPidFile);
+  }
   process.exit(0);
 });
 const path = require('path');
@@ -111,6 +131,19 @@ function readPidFile(filePath) {
     console.error('Error reading PID file:', error);
   }
   return null;
+}
+
+function writePidFile(filePath, pid) {
+  try {
+    // Ensure directory exists
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(filePath, pid.toString());
+  } catch (error) {
+    console.error('Error writing PID file:', error);
+  }
 }
 
 function isProcessRunning(pid) {
@@ -1987,9 +2020,23 @@ app.whenReady().then(() => {
   createWindow(isStartupLaunch);
   registerGlobalShortcuts();
 
-  // Start watchdog process automatically
+  // Write main process PID immediately
+  const browserPidFile = path.join(os.homedir(), '.stealthbrowser', 'browser.pid');
+  writePidFile(browserPidFile, process.pid);
+  console.log('🆔 Main process PID written:', process.pid);
+
+  // Start watchdog process automatically (only if not already running)
   setTimeout(() => {
-    startWatchdogProcess();
+    // Check if we're already being monitored by a watchdog
+    const watchdogPidFile = path.join(os.homedir(), '.stealthbrowser', 'watchdog.pid');
+    const existingWatchdogPid = readPidFile(watchdogPidFile);
+    
+    if (!existingWatchdogPid || !isProcessRunning(existingWatchdogPid)) {
+      console.log('🔍 No watchdog detected, starting one...');
+      startWatchdogProcess();
+    } else {
+      console.log('🔍 Watchdog already running with PID:', existingWatchdogPid);
+    }
   }, 2000); // Start watchdog after 2 seconds
 
   // No notification needed for startup

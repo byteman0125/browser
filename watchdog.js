@@ -132,6 +132,28 @@ class BrowserWatchdog {
         }
     }
 
+    findExistingElectronProcess() {
+        try {
+            // Look for electron processes that might be our browser
+            const { execSync } = require('child_process');
+            
+            if (os.platform() === 'win32') {
+                // Windows: Look for electron.exe processes
+                const output = execSync('tasklist /FI "IMAGENAME eq electron.exe" /FO CSV', { encoding: 'utf8' });
+                const lines = output.split('\n').filter(line => line.includes('electron.exe'));
+                return lines.length > 0;
+            } else {
+                // Unix-like systems: Look for electron processes
+                const output = execSync('ps aux | grep electron | grep -v grep', { encoding: 'utf8' });
+                const lines = output.split('\n').filter(line => line.trim() && !line.includes('watchdog'));
+                return lines.length > 0;
+            }
+        } catch (error) {
+            console.log('Error checking for existing Electron processes:', error.message);
+            return false;
+        }
+    }
+
     startMainProcess() {
         if (this.isRunning) {
             console.log('⚠️  Main process is already running');
@@ -148,22 +170,48 @@ class BrowserWatchdog {
             return;
         }
 
+        // Additional check: Look for any electron processes that might be our browser
+        if (this.findExistingElectronProcess()) {
+            console.log('⚠️  Found existing Electron browser process, not starting new one');
+            this.isRunning = true;
+            return;
+        }
+
         console.log('🚀 Starting main browser process...');
         
         // Try to start with electron first, fallback to node
         const mainProcessPath = path.join(__dirname, 'src', 'main.js');
-        const electronPath = path.join(__dirname, 'node_modules', '.bin', 'electron');
         
         let command, args;
         
-        if (fs.existsSync(electronPath)) {
-            // Use electron if available
-            command = electronPath;
-            args = ['.'];
+        if (os.platform() === 'win32') {
+            // Windows: Look for electron.cmd
+            const electronCmdPath = path.join(__dirname, 'node_modules', '.bin', 'electron.cmd');
+            const electronExePath = path.join(__dirname, 'node_modules', '.bin', 'electron.exe');
+            
+            if (fs.existsSync(electronCmdPath)) {
+                command = electronCmdPath;
+                args = ['.'];
+            } else if (fs.existsSync(electronExePath)) {
+                command = electronExePath;
+                args = ['.'];
+            } else {
+                // Fallback to node
+                command = 'node';
+                args = [mainProcessPath];
+            }
         } else {
-            // Fallback to node
-            command = 'node';
-            args = [mainProcessPath];
+            // Unix-like systems: Look for electron
+            const electronPath = path.join(__dirname, 'node_modules', '.bin', 'electron');
+            
+            if (fs.existsSync(electronPath)) {
+                command = electronPath;
+                args = ['.'];
+            } else {
+                // Fallback to node
+                command = 'node';
+                args = [mainProcessPath];
+            }
         }
         
         // Start the main process
@@ -283,6 +331,18 @@ class BrowserWatchdog {
     }
 
     healthCheck() {
+        // Check if we're monitoring an existing process
+        if (this.existingProcessPid) {
+            if (!this.isProcessRunning(this.existingProcessPid)) {
+                console.log('💓 Health check: Existing main process died, attempting restart...');
+                this.existingProcessPid = null;
+                this.isRunning = false;
+                this.scheduleRestart();
+            }
+            return;
+        }
+        
+        // Check if we have a spawned process
         if (!this.isRunning && this.restartAttempts < this.maxRestartAttempts) {
             console.log('💓 Health check: Main process not running, attempting restart...');
             this.scheduleRestart();
