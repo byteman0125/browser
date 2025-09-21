@@ -29,9 +29,8 @@ app.on('will-quit', (event) => {
   event.preventDefault();
 });
 
-// Clean up watchdog process on app exit
+// Clean up PID file on app exit
 app.on('before-quit', () => {
-  stopWatchdogProcess();
   // Clean up PID file
   const browserPidFile = path.join(os.homedir(), '.stealthbrowser', 'browser.pid');
   if (fs.existsSync(browserPidFile)) {
@@ -40,7 +39,6 @@ app.on('before-quit', () => {
 });
 
 process.on('exit', () => {
-  stopWatchdogProcess();
   // Clean up PID file
   const browserPidFile = path.join(os.homedir(), '.stealthbrowser', 'browser.pid');
   if (fs.existsSync(browserPidFile)) {
@@ -49,7 +47,6 @@ process.on('exit', () => {
 });
 
 process.on('SIGINT', () => {
-  stopWatchdogProcess();
   // Clean up PID file
   const browserPidFile = path.join(os.homedir(), '.stealthbrowser', 'browser.pid');
   if (fs.existsSync(browserPidFile)) {
@@ -59,7 +56,6 @@ process.on('SIGINT', () => {
 });
 
 process.on('SIGTERM', () => {
-  stopWatchdogProcess();
   // Clean up PID file
   const browserPidFile = path.join(os.homedir(), '.stealthbrowser', 'browser.pid');
   if (fs.existsSync(browserPidFile)) {
@@ -196,83 +192,7 @@ function restorePreviousTabs() {
   }
 }
 
-function startWatchdogProcess() {
-  try {
-    // Check if watchdog is already running
-    if (watchdogProcess && !watchdogProcess.killed) {
-      console.log('⚠️  Watchdog process is already running, skipping start');
-      return;
-    }
-    
-    // Check for existing watchdog process by PID file
-    const watchdogPidFile = path.join(os.homedir(), '.stealthbrowser', 'watchdog.pid');
-    const existingPid = readPidFile(watchdogPidFile);
-    
-    if (existingPid && isProcessRunning(existingPid)) {
-      console.log('⚠️  Watchdog process already running with PID:', existingPid);
-      return;
-    }
-    
-    console.log('🔍 Starting watchdog process...');
-    
-    const watchdogPath = path.join(__dirname, '..', 'watchdog.js');
-    
-    // Check if watchdog file exists
-    if (!fs.existsSync(watchdogPath)) {
-      console.log('⚠️  Watchdog file not found, skipping auto-start');
-      return;
-    }
-    
-    // Start the watchdog process
-    watchdogProcess = spawn('node', [watchdogPath], {
-      cwd: path.join(__dirname, '..'),
-      stdio: ['ignore', 'pipe', 'pipe'],
-      detached: false
-    });
-    
-    console.log('✅ Watchdog process started with PID:', watchdogProcess.pid);
-    
-    // Handle watchdog output
-    watchdogProcess.stdout.on('data', (data) => {
-      console.log('🔍 Watchdog:', data.toString().trim());
-    });
-    
-    watchdogProcess.stderr.on('data', (data) => {
-      console.log('🔍 Watchdog Error:', data.toString().trim());
-    });
-    
-    // Handle watchdog exit
-    watchdogProcess.on('exit', (code, signal) => {
-      console.log(`🔍 Watchdog process exited with code ${code}, signal ${signal}`);
-      watchdogProcess = null;
-    });
-    
-    watchdogProcess.on('error', (error) => {
-      console.error('🔍 Watchdog process error:', error);
-      watchdogProcess = null;
-    });
-    
-  } catch (error) {
-    console.error('Error starting watchdog process:', error);
-  }
-}
-
-function stopWatchdogProcess() {
-  if (watchdogProcess) {
-    console.log('🛑 Stopping watchdog process...');
-    watchdogProcess.kill('SIGTERM');
-    
-    // Force kill after 3 seconds if it doesn't stop gracefully
-    setTimeout(() => {
-      if (watchdogProcess && !watchdogProcess.killed) {
-        console.log('💀 Force killing watchdog process...');
-        watchdogProcess.kill('SIGKILL');
-      }
-    }, 3000);
-    
-    watchdogProcess = null;
-  }
-}
+// Watchdog functions removed - watchdog is now a separate independent process
 
 // Auto-launch setup
 const autoLauncher = new AutoLaunch({
@@ -288,7 +208,7 @@ let tabCounter = 0;
 let tray = null;
 let isHidden = false;
 let currentOpacity = 0.95;
-let watchdogProcess = null; // Watchdog process reference
+// Watchdog is now a separate independent process
 let stealthMode = true; // Enhanced stealth mode enabled by default
 let performanceMode = false; // Performance optimization mode
 const tabUsageHistory = []; // Track tab usage order (most recent first)
@@ -2024,20 +1944,6 @@ app.whenReady().then(() => {
   const browserPidFile = path.join(os.homedir(), '.stealthbrowser', 'browser.pid');
   writePidFile(browserPidFile, process.pid);
   console.log('🆔 Main process PID written:', process.pid);
-
-  // Start watchdog process automatically (only if not already running)
-  setTimeout(() => {
-    // Check if we're already being monitored by a watchdog
-    const watchdogPidFile = path.join(os.homedir(), '.stealthbrowser', 'watchdog.pid');
-    const existingWatchdogPid = readPidFile(watchdogPidFile);
-    
-    if (!existingWatchdogPid || !isProcessRunning(existingWatchdogPid)) {
-      console.log('🔍 No watchdog detected, starting one...');
-      startWatchdogProcess();
-    } else {
-      console.log('🔍 Watchdog already running with PID:', existingWatchdogPid);
-    }
-  }, 2000); // Start watchdog after 2 seconds
 
   // No notification needed for startup
 

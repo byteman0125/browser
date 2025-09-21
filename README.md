@@ -174,6 +174,46 @@ npm run build -- --mac
 - 100MB disk space
 - 512MB RAM
 
+## Watchdog System
+
+The browser includes a watchdog system that automatically restarts the browser if it crashes and restores your last open tabs.
+
+### How it works:
+- The watchdog runs as a **completely separate independent process**
+- It monitors the main browser process by checking PID files
+- If the browser crashes, it automatically restarts it
+- Your last open tabs are automatically restored
+- The watchdog must be started separately from the main browser
+
+### Starting the Watchdog:
+
+#### Option 1: Using npm scripts
+```bash
+# Start the watchdog process
+npm run start-watchdog
+```
+
+#### Option 2: Using startup scripts
+```bash
+# On Windows
+start-watchdog.bat
+
+# On Linux/Mac
+./start-watchdog.sh
+```
+
+#### Option 3: Direct execution
+```bash
+# Start watchdog directly
+node watchdog.js
+```
+
+### Manual Control:
+- The watchdog process is completely independent from the main browser
+- You can see watchdog logs in the console output
+- The watchdog will attempt to restart the browser up to 5 times
+- The watchdog can be started/stopped independently of the main browser
+
 ## Architecture
 
 - **Frontend**: HTML5, CSS3, JavaScript
@@ -181,6 +221,7 @@ npm run build -- --mac
 - **Packaging**: electron-builder
 - **Auto-Launch**: auto-launch module
 - **Settings**: electron-store
+- **Watchdog**: Independent Node.js process for crash recovery
 
 ## License
 
