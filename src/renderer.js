@@ -5,6 +5,7 @@ class StealthBrowser {
         this.urlInput = document.getElementById('url-input');
         this.loadingProgress = document.getElementById('loading-progress');
         this.statusText = document.getElementById('status-text');
+        this.autocompleteDropdown = document.getElementById('autocomplete-dropdown');
         this.stealthMode = true; // Always enable stealth mode
         this.currentTabId = 0;
         this.tabs = new Map();
@@ -13,6 +14,11 @@ class StealthBrowser {
         this.isNavigating = false; // Flag to prevent concurrent navigation
         this.navigationQueue = []; // Queue for pending navigation requests
         this.loadingStates = new Map(); // Track loading state per tab
+        
+        // Autocomplete properties
+        this.autocompleteSuggestions = [];
+        this.selectedSuggestionIndex = -1;
+        this.autocompleteTimeout = null;
         
         this.init();
     }
@@ -89,6 +95,22 @@ class StealthBrowser {
                 e.preventDefault();
                 e.stopPropagation();
                 e.target.focus();
+            });
+
+            // Autocomplete functionality
+            this.urlInput.addEventListener('input', (e) => {
+                this.handleAutocompleteInput(e.target.value);
+            });
+
+            this.urlInput.addEventListener('keydown', (e) => {
+                this.handleAutocompleteKeydown(e);
+            });
+
+            // Hide autocomplete when clicking outside
+            document.addEventListener('click', (e) => {
+                if (!this.urlInput.contains(e.target) && !this.autocompleteDropdown.contains(e.target)) {
+                    this.hideAutocomplete();
+                }
             });
         }
 
@@ -326,6 +348,9 @@ class StealthBrowser {
 
     handleUrlSubmit() {
         let url = this.urlInput.value.trim();
+        
+        // Hide autocomplete when submitting
+        this.hideAutocomplete();
         
         // If URL is empty, show blank page
         if (!url) {
@@ -641,6 +666,149 @@ class StealthBrowser {
         // Always try to close the current tab
         // The main process will prevent closing if it's the last tab
         await this.closeTab(this.currentTabId);
+    }
+
+    // Autocomplete methods
+    async handleAutocompleteInput(value) {
+        // Clear previous timeout
+        if (this.autocompleteTimeout) {
+            clearTimeout(this.autocompleteTimeout);
+        }
+
+        // Hide autocomplete if input is too short
+        if (!value || value.length < 2) {
+            this.hideAutocomplete();
+            return;
+        }
+
+        // Debounce the search
+        this.autocompleteTimeout = setTimeout(async () => {
+            try {
+                const suggestions = await ipcRenderer.invoke('get-url-suggestions', { 
+                    query: value, 
+                    limit: 6 
+                });
+                this.autocompleteSuggestions = suggestions;
+                this.selectedSuggestionIndex = -1;
+                this.showAutocomplete(suggestions);
+            } catch (error) {
+                console.error('Error getting search suggestions:', error);
+            }
+        }, 150);
+    }
+
+    handleAutocompleteKeydown(e) {
+        if (!this.autocompleteDropdown.classList.contains('show')) {
+            return;
+        }
+
+        switch (e.key) {
+            case 'ArrowDown':
+                e.preventDefault();
+                this.selectedSuggestionIndex = Math.min(
+                    this.selectedSuggestionIndex + 1,
+                    this.autocompleteSuggestions.length - 1
+                );
+                this.updateSelectedSuggestion();
+                break;
+
+            case 'ArrowUp':
+                e.preventDefault();
+                this.selectedSuggestionIndex = Math.max(this.selectedSuggestionIndex - 1, -1);
+                this.updateSelectedSuggestion();
+                break;
+
+            case 'Enter':
+                e.preventDefault();
+                if (this.selectedSuggestionIndex >= 0) {
+                    const suggestion = this.autocompleteSuggestions[this.selectedSuggestionIndex];
+                    this.urlInput.value = suggestion.url;
+                    this.hideAutocomplete();
+                    this.navigateTo(suggestion.url);
+                } else {
+                    this.handleUrlSubmit();
+                }
+                break;
+
+            case 'Escape':
+                e.preventDefault();
+                this.hideAutocomplete();
+                break;
+        }
+    }
+
+    showAutocomplete(suggestions) {
+        if (!suggestions || suggestions.length === 0) {
+            this.hideAutocomplete();
+            return;
+        }
+
+        this.autocompleteDropdown.innerHTML = '';
+        
+        suggestions.forEach((suggestion, index) => {
+            const item = document.createElement('div');
+            item.className = 'autocomplete-item';
+            item.dataset.index = index;
+            
+            const timeAgo = this.getTimeAgo(suggestion.lastVisited);
+            
+            item.innerHTML = `
+                <div class="autocomplete-item-title">${this.escapeHtml(suggestion.title)}</div>
+                <div class="autocomplete-item-url">${this.escapeHtml(suggestion.url)}</div>
+                <div class="autocomplete-item-meta">
+                    <span class="autocomplete-item-count">${suggestion.count} visits</span>
+                    <span class="autocomplete-item-time">${timeAgo}</span>
+                </div>
+            `;
+            
+            item.addEventListener('click', () => {
+                this.urlInput.value = suggestion.url;
+                this.hideAutocomplete();
+                this.navigateTo(suggestion.url);
+            });
+            
+            this.autocompleteDropdown.appendChild(item);
+        });
+        
+        this.autocompleteDropdown.classList.add('show');
+    }
+
+    updateSelectedSuggestion() {
+        const items = this.autocompleteDropdown.querySelectorAll('.autocomplete-item');
+        items.forEach((item, index) => {
+            if (index === this.selectedSuggestionIndex) {
+                item.classList.add('selected');
+            } else {
+                item.classList.remove('selected');
+            }
+        });
+    }
+
+    hideAutocomplete() {
+        this.autocompleteDropdown.classList.remove('show');
+        this.autocompleteDropdown.innerHTML = '';
+        this.selectedSuggestionIndex = -1;
+        this.autocompleteSuggestions = [];
+    }
+
+    getTimeAgo(date) {
+        const now = new Date();
+        const diffMs = now - date;
+        const diffMins = Math.floor(diffMs / (1000 * 60));
+        const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+        const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+        if (diffMins < 1) return 'Just now';
+        if (diffMins < 60) return `${diffMins}m ago`;
+        if (diffHours < 24) return `${diffHours}h ago`;
+        if (diffDays < 7) return `${diffDays}d ago`;
+        return date.toLocaleDateString();
+    }
+
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
     }
 
     // Cookie management methods

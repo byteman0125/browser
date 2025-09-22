@@ -218,6 +218,126 @@ let stealthMode = true; // Enhanced stealth mode enabled by default
 let performanceMode = false; // Performance optimization mode
 const tabUsageHistory = []; // Track tab usage order (most recent first)
 
+// URL History storage - Persistent like cookies
+const urlHistory = new Map(); // URL -> { count: number, lastVisited: Date, title: string }
+const urlHistoryFile = path.join(os.homedir(), '.stealthbrowser', 'url-history.json');
+
+// Load URL history from persistent storage (like cookies)
+function loadUrlHistory() {
+  try {
+    if (fs.existsSync(urlHistoryFile)) {
+      const data = JSON.parse(fs.readFileSync(urlHistoryFile, 'utf8'));
+      console.log('📂 Loaded URL history:', Object.keys(data).length, 'entries');
+      
+      // Convert loaded data back to Map with proper Date objects
+      for (const [url, entry] of Object.entries(data)) {
+        urlHistory.set(url, {
+          ...entry,
+          lastVisited: new Date(entry.lastVisited)
+        });
+      }
+    }
+  } catch (error) {
+    console.error('Error loading URL history:', error);
+  }
+}
+
+// Save URL history to persistent storage (like cookies)
+function saveUrlHistory() {
+  try {
+    // Ensure directory exists
+    const dir = path.dirname(urlHistoryFile);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    
+    // Convert Map to plain object for JSON serialization
+    const historyData = {};
+    for (const [url, data] of urlHistory.entries()) {
+      historyData[url] = {
+        count: data.count,
+        lastVisited: data.lastVisited.toISOString(),
+        title: data.title,
+        url: data.url
+      };
+    }
+    
+    fs.writeFileSync(urlHistoryFile, JSON.stringify(historyData, null, 2));
+    console.log('💾 Saved URL history:', urlHistory.size, 'entries');
+  } catch (error) {
+    console.error('Error saving URL history:', error);
+  }
+}
+
+// URL History management functions (persistent like cookies)
+function addToUrlHistory(url, title) {
+  if (!url || url === 'about:blank' || url.startsWith('chrome://') || url.startsWith('file://')) {
+    return; // Don't track internal URLs
+  }
+  
+  const normalizedUrl = url.toLowerCase();
+  const existing = urlHistory.get(normalizedUrl);
+  
+  if (existing) {
+    existing.count += 1;
+    existing.lastVisited = new Date();
+    existing.title = title || existing.title;
+  } else {
+    urlHistory.set(normalizedUrl, {
+      count: 1,
+      lastVisited: new Date(),
+      title: title || url,
+      url: url
+    });
+  }
+  
+  // Limit history size to prevent memory issues (increased to 2000)
+  if (urlHistory.size > 2000) {
+    const entries = Array.from(urlHistory.entries());
+    entries.sort((a, b) => b[1].count - a[1].count);
+    urlHistory.clear();
+    entries.slice(0, 1000).forEach(([key, value]) => {
+      urlHistory.set(key, value);
+    });
+  }
+  
+  // Save to persistent storage after each addition (like cookies)
+  saveUrlHistory();
+}
+
+function getUrlSuggestions(query, limit = 6) {
+  if (!query || query.length < 2) return [];
+  
+  const normalizedQuery = query.toLowerCase();
+  const suggestions = [];
+  
+  for (const [url, data] of urlHistory.entries()) {
+    const title = data.title.toLowerCase();
+    const urlLower = url.toLowerCase();
+    
+    // Check if query matches title or URL
+    if (title.includes(normalizedQuery) || urlLower.includes(normalizedQuery)) {
+      // Calculate relevance score (frequency + recency + match quality)
+      const frequencyScore = data.count;
+      const recencyScore = Math.max(0, 30 - Math.floor((Date.now() - data.lastVisited.getTime()) / (1000 * 60 * 60 * 24))); // Days since last visit
+      const matchScore = title.startsWith(normalizedQuery) ? 10 : (urlLower.startsWith(normalizedQuery) ? 5 : 1);
+      
+      suggestions.push({
+        url: data.url,
+        title: data.title,
+        score: frequencyScore + recencyScore + matchScore,
+        count: data.count,
+        lastVisited: data.lastVisited
+      });
+    }
+  }
+  
+  // Sort by score and return top results
+  return suggestions
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit);
+}
+
 // Tab usage history management
 function updateTabUsage(tabId) {
   // Remove tabId from history if it exists
@@ -1045,6 +1165,12 @@ function createBrowserView(tabId = 0, url = '') {
         // Send empty string for about:blank to show blank in address bar
         const displayUrl = currentUrl === 'about:blank' ? '' : currentUrl;
         mainWindow.webContents.send('browser-view-url', { tabId, url: displayUrl });
+        
+        // Add to URL history (persistent like cookies)
+        if (currentUrl && currentUrl !== 'about:blank') {
+          const title = browserView.webContents.getTitle();
+          addToUrlHistory(currentUrl, title);
+        }
       }
     } catch (error) {
       console.error('Error sending loading stop event:', error);
@@ -2182,6 +2308,9 @@ app.whenReady().then(() => {
   createWindow(isStartupLaunch);
   registerGlobalShortcuts();
 
+  // Load URL history from persistent storage (like cookies)
+  loadUrlHistory();
+
   // Write main process PID immediately
   const browserPidFile = path.join(os.homedir(), '.stealthbrowser', 'browser.pid');
   writePidFile(browserPidFile, process.pid);
@@ -2391,6 +2520,30 @@ ipcMain.handle('clear-all-storage', async () => {
   await session.defaultSession.clearStorageData({
     storages: ['cookies', 'localStorage', 'sessionStorage', 'indexedDB', 'websql', 'cacheStorage']
   });
+});
+
+// URL History IPC handlers (persistent like cookies)
+ipcMain.handle('add-to-url-history', async (event, { url, title }) => {
+  addToUrlHistory(url, title);
+  return true;
+});
+
+ipcMain.handle('get-url-suggestions', async (event, { query, limit }) => {
+  return getUrlSuggestions(query, limit);
+});
+
+ipcMain.handle('clear-url-history', async () => {
+  urlHistory.clear();
+  // Also delete the persistent file (like clearing cookies)
+  try {
+    if (fs.existsSync(urlHistoryFile)) {
+      fs.unlinkSync(urlHistoryFile);
+      console.log('🗑️ Deleted URL history file');
+    }
+  } catch (error) {
+    console.error('Error deleting URL history file:', error);
+  }
+  return true;
 });
 
 ipcMain.handle('set-cookie', async (event, { name, value, domain, path, secure, httpOnly, sameSite }) => {
