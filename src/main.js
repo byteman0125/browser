@@ -211,6 +211,7 @@ let tabCounter = 0;
 let tray = null;
 let isHidden = false;
 let currentOpacity = 0.95;
+let tabTimeouts = new Map(); // Store timeouts per tab
 
 
 let stealthMode = true; // Enhanced stealth mode enabled by default
@@ -991,10 +992,40 @@ function createBrowserView(tabId = 0, url = '') {
     });
   }
   
-  // Handle navigation events with error protection
+  // Handle navigation events with error protection and per-tab timeout
+  
   browserView.webContents.on('did-start-loading', () => {
     try {
-      mainWindow.webContents.send('browser-view-loading', { tabId, loading: true });
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('browser-view-loading', { tabId, loading: true });
+      }
+      
+      // Clear any existing timeout for this tab
+      if (tabTimeouts.has(tabId)) {
+        clearTimeout(tabTimeouts.get(tabId));
+      }
+      
+      // Set timeout for loading (2 minutes) - isolated per tab
+      const timeoutId = setTimeout(() => {
+        try {
+          console.log(`⏰ Loading timeout for tab ${tabId} - forcing stop`);
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('browser-view-loading', { tabId, loading: false, timeout: true });
+            mainWindow.webContents.send('browser-view-error', { 
+              tabId, 
+              error: 'Loading timeout - page took too long to load',
+              url: browserView.webContents.getURL()
+            });
+          }
+        } catch (error) {
+          console.error('Error in timeout handler:', error);
+        } finally {
+          tabTimeouts.delete(tabId); // Clean up timeout reference
+        }
+      }, 120000); // 2 minute timeout
+      
+      tabTimeouts.set(tabId, timeoutId);
+      
     } catch (error) {
       console.error('Error sending loading start event:', error);
     }
@@ -1002,22 +1033,54 @@ function createBrowserView(tabId = 0, url = '') {
   
   browserView.webContents.on('did-stop-loading', () => {
     try {
-      mainWindow.webContents.send('browser-view-loading', { tabId, loading: false });
-      const currentUrl = browserView.webContents.getURL();
-      // Send empty string for about:blank to show blank in address bar
-      const displayUrl = currentUrl === 'about:blank' ? '' : currentUrl;
-      mainWindow.webContents.send('browser-view-url', { tabId, url: displayUrl });
+      // Clear timeout for this specific tab
+      if (tabTimeouts.has(tabId)) {
+        clearTimeout(tabTimeouts.get(tabId));
+        tabTimeouts.delete(tabId);
+      }
+      
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('browser-view-loading', { tabId, loading: false });
+        const currentUrl = browserView.webContents.getURL();
+        // Send empty string for about:blank to show blank in address bar
+        const displayUrl = currentUrl === 'about:blank' ? '' : currentUrl;
+        mainWindow.webContents.send('browser-view-url', { tabId, url: displayUrl });
+      }
     } catch (error) {
       console.error('Error sending loading stop event:', error);
     }
   });
   
   browserView.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
-    mainWindow.webContents.send('browser-view-loading', { tabId, loading: false });
+    try {
+      // Clear timeout for this specific tab
+      if (tabTimeouts.has(tabId)) {
+        clearTimeout(tabTimeouts.get(tabId));
+        tabTimeouts.delete(tabId);
+      }
+      
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('browser-view-loading', { tabId, loading: false });
+        mainWindow.webContents.send('browser-view-error', { 
+          tabId, 
+          error: `Failed to load: ${errorDescription}`,
+          errorCode,
+          url: validatedURL
+        });
+      }
+    } catch (error) {
+      console.error('Error handling failed load:', error);
+    }
   });
   
   browserView.webContents.on('page-title-updated', (event, title) => {
-    mainWindow.webContents.send('browser-view-title', { tabId, title });
+    try {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('browser-view-title', { tabId, title });
+      }
+    } catch (error) {
+      console.error('Error sending page title:', error);
+    }
   });
   
   // Set as current view if it's the first tab
@@ -1679,6 +1742,14 @@ function setupZoomControls() {
 // Cleanup function to destroy all BrowserViews
 function cleanupBrowserViews() {
   console.log('Cleaning up all BrowserViews...');
+  
+  // Clear all timeouts first
+  tabTimeouts.forEach((timeoutId, tabId) => {
+    clearTimeout(timeoutId);
+    console.log('Cleared timeout for tab:', tabId);
+  });
+  tabTimeouts.clear();
+  
   browserViews.forEach((browserView, tabId) => {
     try {
       if (mainWindow.getBrowserView() === browserView) {
@@ -2322,6 +2393,82 @@ ipcMain.handle('clear-all-storage', async () => {
   });
 });
 
+ipcMain.handle('set-cookie', async (event, { name, value, domain, path, secure, httpOnly, sameSite }) => {
+  try {
+    // Get the current tab's BrowserView session
+    const currentBrowserView = browserViews.get(currentTabId);
+    if (!currentBrowserView) {
+      throw new Error('No active tab found');
+    }
+
+    // Determine the protocol based on secure flag
+    const protocol = secure ? 'https' : 'http';
+    
+    // Build the cookie URL
+    // For __Host- cookies, we need to use the current tab's URL
+    let cookieUrl;
+    if (domain) {
+      cookieUrl = `${protocol}://${domain}${path}`;
+    } else {
+      // For __Host- cookies, get the current tab's URL
+      const currentUrl = currentBrowserView.webContents.getURL();
+      if (currentUrl && currentUrl !== 'about:blank') {
+        const url = new URL(currentUrl);
+        cookieUrl = `${url.protocol}//${url.host}${path}`;
+      } else {
+        throw new Error('Cannot set __Host- cookie without active website');
+      }
+    }
+    
+    // Prepare cookie data
+    const cookieData = {
+      url: cookieUrl,
+      name: name,
+      value: value,
+      path: path || '/',
+      secure: secure || false,
+      httpOnly: httpOnly || false,
+      sameSite: sameSite || 'lax'
+    };
+
+    // Only add domain if it's specified (__Host- cookies don't have domain)
+    if (domain) {
+      cookieData.domain = domain;
+    }
+
+    // Set cookie in the current tab's session
+    await currentBrowserView.webContents.session.cookies.set(cookieData);
+
+    console.log(`Cookie set: ${name}=${value} for ${domain} (secure: ${secure}, httpOnly: ${httpOnly})`);
+    return true;
+  } catch (error) {
+    console.error('Error setting cookie:', error);
+    // Try with http if https failed
+    if (secure) {
+      try {
+        const cookieData = {
+          url: `http://${domain}${path || '/'}`,
+          name: name,
+          value: value,
+          domain: domain,
+          path: path || '/',
+          secure: false,
+          httpOnly: httpOnly || false,
+          sameSite: sameSite || 'lax'
+        };
+        
+        await currentBrowserView.webContents.session.cookies.set(cookieData);
+        console.log(`Cookie set with http fallback: ${name}=${value} for ${domain}`);
+        return true;
+      } catch (fallbackError) {
+        console.error('Fallback cookie setting also failed:', fallbackError);
+        throw fallbackError;
+      }
+    }
+    throw error;
+  }
+});
+
 ipcMain.handle('set-stealth-mode', async (event, enabled) => {
   const ses = session.defaultSession;
   if (enabled) {
@@ -2394,6 +2541,22 @@ ipcMain.handle('browser-view-reload', (event, tabId) => {
   }
 });
 
+ipcMain.handle('browser-view-stop', (event, tabId) => {
+  const browserView = browserViews.get(tabId);
+  if (browserView) {
+    browserView.webContents.stop();
+    
+    // Clear timeout for this tab
+    if (tabTimeouts.has(tabId)) {
+      clearTimeout(tabTimeouts.get(tabId));
+      tabTimeouts.delete(tabId);
+    }
+    
+    // Send loading stopped event
+    mainWindow.webContents.send('browser-view-loading', { tabId, loading: false, stopped: true });
+  }
+});
+
 ipcMain.handle('browser-view-can-go-back', (event, tabId) => {
   const browserView = browserViews.get(tabId);
   return browserView ? browserView.webContents.canGoBack() : false;
@@ -2455,6 +2618,12 @@ ipcMain.handle('close-tab', (event, tabId) => {
       console.log('BrowserView cleaned up for tab:', tabId);
     } catch (error) {
       console.error('Error destroying BrowserView:', error);
+    }
+    
+    // Clear any pending timeout for this tab
+    if (tabTimeouts.has(tabId)) {
+      clearTimeout(tabTimeouts.get(tabId));
+      tabTimeouts.delete(tabId);
     }
     
     // Remove from our tracking map

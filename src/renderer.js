@@ -45,7 +45,14 @@ class StealthBrowser {
         const refreshBtn = document.getElementById('refresh-btn');
         if (refreshBtn) {
             refreshBtn.addEventListener('click', () => {
-                ipcRenderer.invoke('browser-view-reload', this.currentTabId);
+                const isLoading = this.loadingStates.get(this.currentTabId) || false;
+                if (isLoading) {
+                    // Stop loading
+                    ipcRenderer.invoke('browser-view-stop', this.currentTabId);
+                } else {
+                    // Refresh page
+                    ipcRenderer.invoke('browser-view-reload', this.currentTabId);
+                }
             });
         }
 
@@ -105,6 +112,14 @@ class StealthBrowser {
         if (cookieBtn) {
             cookieBtn.addEventListener('click', () => {
                 this.showCookieManagement();
+            });
+        }
+
+        // Paste cookie button
+        const pasteCookieBtn = document.getElementById('paste-cookie-btn');
+        if (pasteCookieBtn) {
+            pasteCookieBtn.addEventListener('click', () => {
+                this.pasteCookieFromClipboard();
             });
         }
 
@@ -239,7 +254,7 @@ class StealthBrowser {
 
     setupBrowserViewListeners() {
         // Listen for BrowserView events from main process
-        ipcRenderer.on('browser-view-loading', (event, { tabId, loading }) => {
+        ipcRenderer.on('browser-view-loading', (event, { tabId, loading, timeout, stopped }) => {
             // Update loading state for the tab
             this.loadingStates.set(tabId, loading);
             
@@ -249,13 +264,34 @@ class StealthBrowser {
                     this.statusText.textContent = 'Loading...';
                 } else {
                     this.hideLoading();
-                    this.statusText.textContent = 'Ready';
+                    if (stopped) {
+                        this.statusText.textContent = 'Stopped';
+                    } else if (timeout) {
+                        this.statusText.textContent = 'Loading timeout';
+                    } else {
+                        this.statusText.textContent = 'Ready';
+                    }
                     this.updateNavigationButtons();
                     
                     // Process queued navigation requests when loading completes
                     setTimeout(() => {
                         this.processNavigationQueue();
                     }, 500);
+                }
+            }
+        });
+        
+        // Listen for error events
+        ipcRenderer.on('browser-view-error', (event, { tabId, error, errorCode, url }) => {
+            console.log(`❌ Browser error in tab ${tabId}:`, error);
+            
+            if (tabId === this.currentTabId) {
+                this.hideLoading();
+                this.statusText.textContent = `Error: ${error}`;
+                
+                // Show error message in address bar
+                if (this.addressInput) {
+                    this.addressInput.value = url || '';
                 }
             }
         });
@@ -382,9 +418,30 @@ class StealthBrowser {
     async updateNavigationButtons() {
         const canGoBack = await ipcRenderer.invoke('browser-view-can-go-back', this.currentTabId);
         const canGoForward = await ipcRenderer.invoke('browser-view-can-go-forward', this.currentTabId);
+        const isLoading = this.loadingStates.get(this.currentTabId) || false;
         
         document.getElementById('back-btn').disabled = !canGoBack;
         document.getElementById('forward-btn').disabled = !canGoForward;
+        
+        // Update refresh/stop button based on loading state
+        const refreshBtn = document.getElementById('refresh-btn');
+        if (refreshBtn) {
+            if (isLoading) {
+                refreshBtn.title = 'Stop Loading';
+                refreshBtn.innerHTML = `
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+                    </svg>
+                `;
+            } else {
+                refreshBtn.title = 'Refresh';
+                refreshBtn.innerHTML = `
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+                    </svg>
+                `;
+            }
+        }
     }
 
     updatePageTitle(title) {
@@ -395,64 +452,29 @@ class StealthBrowser {
     }
 
     showLoading() {
-        // Show loading bar with animation
-        this.loadingProgress.style.width = '0%';
-        this.loadingProgress.classList.add('loading');
+        // Simple loading indicator
         this.statusText.textContent = 'Loading...';
+        this.loadingProgress.style.width = '100%';
+        this.loadingProgress.classList.add('loading');
         
-        // Add loading animation to the webview container
-        const webviewContainer = document.getElementById('webview-container');
-        if (webviewContainer) {
-            webviewContainer.classList.add('loading');
-        }
-        
-        // Add loading animation to the address bar
-        const addressBar = document.querySelector('.address-bar');
-        if (addressBar) {
-            addressBar.classList.add('loading');
-        }
-        
-        // Start progress animation
-        this.animateLoadingProgress();
+        // Show stop button during loading
+        this.updateNavigationButtons();
     }
 
     hideLoading() {
-        // Complete the loading animation
-        this.loadingProgress.style.width = '100%';
+        // Simple loading completion
         this.loadingProgress.classList.remove('loading');
-        this.statusText.textContent = 'Ready';
-        
-        // Remove loading animations
-        const webviewContainer = document.getElementById('webview-container');
-        if (webviewContainer) {
-            webviewContainer.classList.remove('loading');
-        }
-        
-        const addressBar = document.querySelector('.address-bar');
-        if (addressBar) {
-            addressBar.classList.remove('loading');
-        }
         
         // Hide progress bar after completion
         setTimeout(() => {
             this.loadingProgress.style.width = '0%';
         }, 300);
+        
+        // Update navigation buttons
+        this.updateNavigationButtons();
     }
 
-    animateLoadingProgress() {
-        let progress = 0;
-        const interval = setInterval(() => {
-            if (this.loadingProgress.classList.contains('loading')) {
-                // Smoother progress animation
-                const increment = Math.random() * 8 + 2; // 2-10% increments
-                progress += increment;
-                if (progress > 85) progress = 85; // Don't complete until page is actually loaded
-                this.loadingProgress.style.width = progress + '%';
-            } else {
-                clearInterval(interval);
-            }
-        }, 50); // Faster updates for smoother animation
-    }
+    // Removed fake progress animation - using simple loading indicator instead
 
     toggleStealthMode() {
         this.stealthMode = !this.stealthMode;
@@ -525,6 +547,16 @@ class StealthBrowser {
             this.tabs.set(newTabId, { id: newTabId, title, url });
             this.createTabElement(newTabId);
             await this.switchToTab(newTabId);
+            
+            // Auto-focus the URL input for new tabs
+            if (this.urlInput) {
+                // Small delay to ensure the tab switch is complete
+                setTimeout(() => {
+                    this.urlInput.focus();
+                    this.urlInput.select(); // Select all text for easy replacement
+                    console.log('Auto-focused URL input for new tab');
+                }, 100);
+            }
             
             // Ensure the URL is loaded
             console.log('Switching to new tab and loading URL:', url);
@@ -623,6 +655,224 @@ class StealthBrowser {
         
         // Create a new tab for cookie management using special URL
         await this.createNewTab('cookie-management');
+    }
+
+    async pasteCookieFromClipboard() {
+        try {
+            // Get the current tab's URL to determine the domain
+            const currentUrl = await ipcRenderer.invoke('get-current-tab-url', this.currentTabId);
+            
+            if (!currentUrl || currentUrl === '' || currentUrl === 'about:blank') {
+                this.showNotification('No active website to paste cookies to', 'error');
+                return;
+            }
+
+            // Extract domain from URL
+            let domain;
+            try {
+                const url = new URL(currentUrl);
+                domain = url.hostname;
+            } catch (error) {
+                this.showNotification('Invalid URL format', 'error');
+                return;
+            }
+
+            // Get clipboard content
+            const clipboardContent = await navigator.clipboard.readText();
+            
+            if (!clipboardContent.trim()) {
+                this.showNotification('Clipboard is empty', 'error');
+                return;
+            }
+
+            // Parse cookies from clipboard content
+            const cookies = this.parseCookiesFromText(clipboardContent, domain);
+            
+            if (cookies.length === 0) {
+                this.showNotification('No valid cookies found in clipboard', 'error');
+                return;
+            }
+
+            // Set cookies for the current domain
+            let successCount = 0;
+            for (const cookie of cookies) {
+                try {
+                    // Handle special cookie prefixes
+                    let cookieConfig = {
+                        name: cookie.name,
+                        value: cookie.value,
+                        domain: cookie.domain,
+                        path: cookie.path || '/',
+                        secure: cookie.secure || false,
+                        httpOnly: cookie.httpOnly || false,
+                        sameSite: cookie.sameSite || 'lax'
+                    };
+
+                    // Handle __Host- prefix (requires secure, no domain, path=/)
+                    if (cookie.name.startsWith('__Host-')) {
+                        cookieConfig.secure = true;
+                        cookieConfig.domain = undefined; // __Host- cookies cannot have domain
+                        cookieConfig.path = '/';
+                    }
+                    
+                    // Handle __Secure- prefix (requires secure)
+                    if (cookie.name.startsWith('__Secure-')) {
+                        cookieConfig.secure = true;
+                    }
+
+                    await ipcRenderer.invoke('set-cookie', cookieConfig);
+                    successCount++;
+                } catch (error) {
+                    console.error('Error setting cookie:', cookie.name, error);
+                }
+            }
+
+            if (successCount > 0) {
+                this.showNotification(`Successfully pasted ${successCount} cookie(s) for ${domain}`, 'success');
+                // Refresh the page to apply the new cookies
+                ipcRenderer.invoke('browser-view-reload', this.currentTabId);
+            } else {
+                this.showNotification('Failed to paste any cookies', 'error');
+            }
+
+        } catch (error) {
+            console.error('Error pasting cookies:', error);
+            this.showNotification('Error pasting cookies: ' + error.message, 'error');
+        }
+    }
+
+    parseCookiesFromText(text, domain) {
+        const cookies = [];
+        const trimmedText = text.trim();
+        
+        // First, try to parse as JSON array (most common format from browser dev tools)
+        if (trimmedText.startsWith('[') && trimmedText.endsWith(']')) {
+            try {
+                const cookieArray = JSON.parse(trimmedText);
+                if (Array.isArray(cookieArray)) {
+                    for (const cookieObj of cookieArray) {
+                        if (cookieObj && typeof cookieObj === 'object' && cookieObj.name && cookieObj.value) {
+                            cookies.push({
+                                name: cookieObj.name,
+                                value: cookieObj.value,
+                                domain: cookieObj.domain || domain,
+                                path: cookieObj.path || '/',
+                                secure: cookieObj.secure || false,
+                                httpOnly: cookieObj.httpOnly || false,
+                                sameSite: cookieObj.sameSite || 'lax'
+                            });
+                        }
+                    }
+                    return cookies;
+                }
+            } catch (error) {
+                console.log('Failed to parse JSON array, trying other formats:', error);
+            }
+        }
+        
+        // If not JSON array, try parsing line by line
+        const lines = text.split('\n');
+        
+        for (const line of lines) {
+            const trimmedLine = line.trim();
+            if (!trimmedLine) continue;
+            
+            // Handle different cookie formats
+            let cookieData = null;
+            
+            // Format 1: "name=value; domain=.example.com; path=/; secure"
+            if (trimmedLine.includes('=') && trimmedLine.includes(';')) {
+                cookieData = this.parseCookieString(trimmedLine, domain);
+            }
+            // Format 2: "name=value" (simple format)
+            else if (trimmedLine.includes('=') && !trimmedLine.includes(';')) {
+                const [name, value] = trimmedLine.split('=', 2);
+                if (name && value) {
+                    cookieData = {
+                        name: name.trim(),
+                        value: value.trim(),
+                        domain: domain,
+                        path: '/',
+                        secure: false,
+                        httpOnly: false,
+                        sameSite: 'lax'
+                    };
+                }
+            }
+            // Format 3: JSON object format
+            else if (trimmedLine.startsWith('{') && trimmedLine.endsWith('}')) {
+                try {
+                    const parsed = JSON.parse(trimmedLine);
+                    if (parsed.name && parsed.value) {
+                        cookieData = {
+                            name: parsed.name,
+                            value: parsed.value,
+                            domain: parsed.domain || domain,
+                            path: parsed.path || '/',
+                            secure: parsed.secure || false,
+                            httpOnly: parsed.httpOnly || false,
+                            sameSite: parsed.sameSite || 'lax'
+                        };
+                    }
+                } catch (error) {
+                    console.log('Failed to parse JSON cookie:', error);
+                }
+            }
+            
+            if (cookieData) {
+                cookies.push(cookieData);
+            }
+        }
+        
+        return cookies;
+    }
+
+    parseCookieString(cookieString, defaultDomain) {
+        const parts = cookieString.split(';');
+        const cookie = {
+            domain: defaultDomain,
+            path: '/',
+            secure: false,
+            httpOnly: false,
+            sameSite: 'lax'
+        };
+        
+        for (let i = 0; i < parts.length; i++) {
+            const part = parts[i].trim();
+            
+            if (i === 0) {
+                // First part is name=value
+                const [name, value] = part.split('=', 2);
+                if (name && value) {
+                    cookie.name = name.trim();
+                    cookie.value = value.trim();
+                }
+            } else {
+                // Other parts are attributes
+                const [key, value] = part.split('=', 2);
+                const lowerKey = key.toLowerCase();
+                
+                switch (lowerKey) {
+                    case 'domain':
+                        cookie.domain = value ? value.trim() : defaultDomain;
+                        break;
+                    case 'path':
+                        cookie.path = value ? value.trim() : '/';
+                        break;
+                    case 'secure':
+                        cookie.secure = true;
+                        break;
+                    case 'httponly':
+                        cookie.httpOnly = true;
+                        break;
+                    case 'samesite':
+                        cookie.sameSite = value ? value.trim().toLowerCase() : 'lax';
+                        break;
+                }
+            }
+        }
+        
+        return cookie.name && cookie.value ? cookie : null;
     }
     
     findCookieManagementTab() {
@@ -898,9 +1148,19 @@ class StealthBrowser {
             console.log('Current tab URL:', currentUrl, 'Is new tab:', isCurrentTabNew);
             
             if (isCurrentTabNew) {
-                // Current tab is new tab - navigate in current tab
+                // Current tab is new tab - navigate in current tab and update URL bar
                 console.log('Navigating in current tab (new tab)');
                 this.navigateTo(url);
+                // Immediately update the URL bar to show the target URL
+                if (this.urlInput) {
+                    this.urlInput.value = url;
+                    this.updateSecurityIndicator(url);
+                    // Focus the URL input after setting the value
+                    setTimeout(() => {
+                        this.urlInput.focus();
+                        this.urlInput.select();
+                    }, 100);
+                }
             } else {
                 // Current tab is not new - check if target URL already exists in another tab
                 console.log('Checking for existing tab with URL:', url);
@@ -914,6 +1174,16 @@ class StealthBrowser {
                     // Target URL doesn't exist - create new tab
                     console.log('Creating new tab for URL:', url);
                     await this.createNewTab(url);
+                    // Ensure URL bar is updated for the new tab
+                    if (this.urlInput) {
+                        this.urlInput.value = url;
+                        this.updateSecurityIndicator(url);
+                        // Focus the URL input after setting the value
+                        setTimeout(() => {
+                            this.urlInput.focus();
+                            this.urlInput.select();
+                        }, 150);
+                    }
                 }
             }
         } catch (error) {
@@ -924,6 +1194,11 @@ class StealthBrowser {
             console.log('Falling back to simple navigation');
             try {
                 this.navigateTo(url);
+                // Update URL bar even in fallback case
+                if (this.urlInput) {
+                    this.urlInput.value = url;
+                    this.updateSecurityIndicator(url);
+                }
             } catch (fallbackError) {
                 console.error('Fallback navigation also failed:', fallbackError);
             }
