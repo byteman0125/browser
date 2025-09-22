@@ -61,13 +61,13 @@
     },
           "extraResources": [
             {
-              "from": "dist/type_word.exe",
+              "from": "type_word.exe",
               "to": "type_word.exe"
             }
           ],
           "extraFiles": [
             {
-              "from": "dist/type_word.exe",
+              "from": "type_word.exe",
               "to": "type_word.exe"
             }
           ],

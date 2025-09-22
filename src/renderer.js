@@ -108,31 +108,9 @@ class StealthBrowser {
             });
         }
 
-        // Google Authentication
-        const signinBtn = document.getElementById('signin-btn');
-        if (signinBtn) {
-            signinBtn.addEventListener('click', () => {
-                console.log('Google Sign-In button clicked');
-                ipcRenderer.invoke('google-signin');
-            });
-        } else {
-            console.error('Sign-in button not found!');
-        }
 
-        const signoutBtn = document.getElementById('signout-btn');
-        if (signoutBtn) {
-            signoutBtn.addEventListener('click', () => {
-                ipcRenderer.invoke('google-signout');
-            });
-        }
 
         // Google account management
-        const googleAccountBtn = document.getElementById('google-account-btn');
-        if (googleAccountBtn) {
-            googleAccountBtn.addEventListener('click', () => {
-                this.showGoogleAccountModal();
-            });
-        }
 
         // Tab management
         const newTabBtn = document.getElementById('new-tab-btn');
@@ -282,19 +260,6 @@ class StealthBrowser {
             }
         });
 
-        // Google Authentication listeners
-        ipcRenderer.on('auth-success', (event, userInfo) => {
-            console.log('Renderer received auth-success event:', userInfo);
-            this.handleAuthSuccess(userInfo);
-        });
-
-        ipcRenderer.on('auth-signout', (event) => {
-            this.handleAuthSignOut();
-        });
-
-        ipcRenderer.on('auth-error', (event, error) => {
-            this.handleAuthError(error);
-        });
 
         ipcRenderer.on('browser-view-url', (event, { tabId, url }) => {
             console.log('Received browser-view-url:', { tabId, url, currentTabId: this.currentTabId });
@@ -641,14 +606,9 @@ class StealthBrowser {
      }
 
     async closeCurrentTab() {
-        // Check if this is the last tab
-        if (this.tabs.size <= 1) {
-            // If it's the last tab, just hide the window (don't create new tab automatically)
-            await ipcRenderer.invoke('hide-browser');
-        } else {
-            // Close the current tab normally
-            await this.closeTab(this.currentTabId);
-        }
+        // Always try to close the current tab
+        // The main process will prevent closing if it's the last tab
+        await this.closeTab(this.currentTabId);
     }
 
     // Cookie management methods
@@ -879,127 +839,6 @@ class StealthBrowser {
         }
     }
 
-    // Google Account Management Methods
-    showGoogleAccountModal() {
-        const modal = document.getElementById('google-account-modal');
-        if (modal) {
-            modal.style.display = 'block';
-            this.setupGoogleAccountEventListeners();
-        }
-    }
-
-    hideGoogleAccountModal() {
-        const modal = document.getElementById('google-account-modal');
-        if (modal) {
-            modal.style.display = 'none';
-        }
-    }
-
-    setupGoogleAccountEventListeners() {
-        // Close modal
-        const closeBtn = document.getElementById('google-account-modal-close');
-        if (closeBtn) {
-            closeBtn.onclick = () => this.hideGoogleAccountModal();
-        }
-
-        // Google sign in
-        const signinBtn = document.getElementById('google-signin-btn');
-        if (signinBtn) {
-            signinBtn.onclick = () => this.signInWithGoogle();
-        }
-
-        // Google sign out
-        const signoutBtn = document.getElementById('google-signout-btn');
-        if (signoutBtn) {
-            signoutBtn.onclick = () => this.signOutFromGoogle();
-        }
-
-        // Service buttons
-        const serviceBtns = document.querySelectorAll('.service-btn');
-        serviceBtns.forEach(btn => {
-            btn.onclick = () => {
-                const url = btn.dataset.url;
-                if (url) {
-                    this.navigateTo(url);
-                    this.hideGoogleAccountModal();
-                }
-            };
-        });
-
-        // Close modal when clicking outside
-        const modal = document.getElementById('google-account-modal');
-        if (modal) {
-            modal.onclick = (e) => {
-                if (e.target === modal) {
-                    this.hideGoogleAccountModal();
-                }
-            };
-        }
-    }
-
-    async signInWithGoogle() {
-        try {
-            // Navigate to Google sign-in page
-            this.navigateTo('https://accounts.google.com/signin');
-            this.hideGoogleAccountModal();
-            
-            // Show success message
-            this.statusText.textContent = 'Redirecting to Google Sign-in...';
-        } catch (error) {
-            console.error('Error signing in with Google:', error);
-            alert('Error signing in with Google');
-        }
-    }
-
-    async signOutFromGoogle() {
-        try {
-            // Clear Google cookies and session data
-            await ipcRenderer.invoke('clear-cookies-for-domain', 'google.com');
-            await ipcRenderer.invoke('clear-cookies-for-domain', 'accounts.google.com');
-            
-            // Navigate to Google sign-out
-            this.navigateTo('https://accounts.google.com/logout');
-            
-            // Update UI
-            this.updateGoogleAccountUI(false);
-            
-            alert('Signed out from Google');
-        } catch (error) {
-            console.error('Error signing out from Google:', error);
-            alert('Error signing out from Google');
-        }
-    }
-
-    updateGoogleAccountUI(isSignedIn, userInfo = null) {
-        const signinBtn = document.getElementById('google-signin-btn');
-        const signoutBtn = document.getElementById('google-signout-btn');
-        const accountInfo = document.getElementById('account-info');
-        
-        if (isSignedIn && userInfo) {
-            signinBtn.style.display = 'none';
-            signoutBtn.style.display = 'block';
-            accountInfo.style.display = 'block';
-            
-            // Update account info
-            const avatar = document.getElementById('account-avatar');
-            const name = document.getElementById('account-name');
-            const email = document.getElementById('account-email');
-            
-            if (avatar && userInfo.picture) {
-                avatar.src = userInfo.picture;
-            }
-            if (name && userInfo.name) {
-                name.textContent = userInfo.name;
-            }
-            if (email && userInfo.email) {
-                email.textContent = userInfo.email;
-            }
-        } else {
-            signinBtn.style.display = 'block';
-            signoutBtn.style.display = 'none';
-            accountInfo.style.display = 'none';
-        }
-    }
 
     // Update URL bar for current tab
     async updateUrlBarForCurrentTab() {
@@ -1107,65 +946,6 @@ class StealthBrowser {
         }
     }
 
-    // Google Authentication handlers
-    handleAuthSuccess(userInfo) {
-        console.log('Google authentication successful:', userInfo);
-        console.log('Updating UI for signed-in state...');
-        
-        // Update UI to show signed-in state
-        const signinBtn = document.getElementById('signin-btn');
-        const signoutBtn = document.getElementById('signout-btn');
-        const userInfoDiv = document.getElementById('user-info');
-        
-        console.log('UI elements found:', {
-            signinBtn: !!signinBtn,
-            signoutBtn: !!signoutBtn,
-            userInfoDiv: !!userInfoDiv
-        });
-        
-        if (signinBtn) {
-            signinBtn.style.display = 'none';
-            console.log('Sign-in button hidden');
-        }
-        if (signoutBtn) {
-            signoutBtn.style.display = 'flex';
-            console.log('Sign-out button shown');
-        }
-        if (userInfoDiv) {
-            userInfoDiv.textContent = userInfo.name || userInfo.email;
-            userInfoDiv.style.display = 'block';
-            console.log('User info updated:', userInfoDiv.textContent);
-        }
-        
-        // Show success notification
-        this.showNotification('Signed in with Google!', 'success');
-    }
-
-    handleAuthSignOut() {
-        console.log('Google sign-out successful');
-        
-        // Update UI to show signed-out state
-        const signinBtn = document.getElementById('signin-btn');
-        const signoutBtn = document.getElementById('signout-btn');
-        const userInfoDiv = document.getElementById('user-info');
-        
-        if (signinBtn) signinBtn.style.display = 'flex';
-        if (signoutBtn) signoutBtn.style.display = 'none';
-        if (userInfoDiv) {
-            userInfoDiv.textContent = '';
-            userInfoDiv.style.display = 'none';
-        }
-        
-        // Show sign-out notification
-        this.showNotification('Signed out', 'info');
-    }
-
-    handleAuthError(error) {
-        console.error('Google authentication error:', error);
-        
-        // Show error notification
-        this.showNotification(`Authentication error: ${error.message}`, 'error');
-    }
 
     showNotification(message, type = 'info') {
         console.log('Showing notification:', message, type);
@@ -1229,16 +1009,6 @@ class StealthBrowser {
         }, 2500);
     }
 
-    async checkAuthStatus() {
-        try {
-            const authStatus = await ipcRenderer.invoke('get-auth-status');
-            if (authStatus.isSignedIn && authStatus.userInfo) {
-                this.handleAuthSuccess(authStatus.userInfo);
-            }
-        } catch (error) {
-            console.error('Error checking auth status:', error);
-        }
-    }
 }
 
 // Global functions for cookie management

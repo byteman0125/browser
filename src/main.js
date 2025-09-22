@@ -489,6 +489,21 @@ function createWindow(startHidden = false) {
   // Load the main HTML file
   mainWindow.loadFile(path.join(__dirname, 'renderer.html'));
 
+  // Setup keyboard shortcuts for tab management (only when window is focused)
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.control && input.key === 't') {
+      event.preventDefault();
+      console.log('Ctrl+T pressed - creating new tab');
+      mainWindow.webContents.send('create-new-tab');
+    }
+    
+    if (input.control && input.key === 'w') {
+      event.preventDefault();
+      console.log('Ctrl+W pressed - closing current tab');
+      mainWindow.webContents.send('close-current-tab');
+    }
+  });
+
   mainWindow.setContentProtection(true);
   mainWindow.setVisibleOnAllWorkspaces(false, { visibleOnFullScreen: false });
   mainWindow.setSkipTaskbar(true);
@@ -498,12 +513,7 @@ function createWindow(startHidden = false) {
   mainWindow.setAlwaysOnTop(true, 'screen-saver');
 
   // Add crash prevention and stability measures
-  mainWindow.on('close', (event) => {
-    console.log('Window close event triggered - preventing close');
-    event.preventDefault();
-    mainWindow.hide();
-    isHidden = true;
-  });
+  // Note: Window close handler moved to later in the function to avoid duplication
 
   // Handle window closed event
   mainWindow.on('closed', () => {
@@ -1282,14 +1292,25 @@ let autoHotkeyCheckInterval = null;
 // Function to check if AutoHotkey script is running
 function isAutoHotkeyRunning() {
   return new Promise((resolve) => {
+    if (os.platform() !== 'win32') {
+      resolve(false);
+      return;
+    }
+    
     const { exec } = require('child_process');
-    exec('tasklist /FI "IMAGENAME eq type_word.exe" /FO CSV', (error, stdout) => {
+    // Use more reliable Windows process detection
+    exec('tasklist /FI "IMAGENAME eq type_word.exe" /FO CSV /NH', (error, stdout) => {
       if (error) {
+        console.log('Error checking AutoHotkey process:', error.message);
         resolve(false);
         return;
       }
       // Check if type_word.exe is in the task list
       const isRunning = stdout.toLowerCase().includes('type_word.exe');
+      console.log('AutoHotkey process check:', isRunning ? 'Running' : 'Not running');
+      if (isRunning) {
+        console.log('📋 Process details:', stdout.trim());
+      }
       resolve(isRunning);
     });
   });
@@ -1304,24 +1325,39 @@ async function startAutoHotkeyScript() {
     
     let typeWordPath;
     if (os.platform() === 'win32') {
-      // Look in the same directory as the main executable first
-      const appPath = process.execPath; // Path to the main executable
-      const appDir = path.dirname(appPath);
-      typeWordPath = path.join(appDir, 'type_word.exe');
+      console.log('🔍 Starting AutoHotkey script detection on Windows...');
       
-      console.log('🔍 Looking for type_word at:', typeWordPath);
+      // For packaged Windows app, check multiple locations (prioritize executable directory)
+      const possiblePaths = [
+        // 1. Same directory as main executable (StealthBrowser.exe) - MOST IMPORTANT
+        path.join(path.dirname(process.execPath), 'type_word.exe'),
+        // 2. Resources directory (for packaged app)
+        path.join(process.resourcesPath, 'type_word.exe'),
+        // 3. Current working directory (for development)
+        path.join(process.cwd(), 'type_word.exe'),
+        // 4. Direct current directory path
+        './type_word.exe',
+        // 5. Dist directory (for development)
+        path.join(__dirname, '..', 'dist', 'type_word.exe'),
+        // 6. Root directory
+        path.join(__dirname, '..', 'type_word.exe')
+      ];
       
-      // If not found in app directory, try resources directory (for packaged app)
-      if (!fs.existsSync(typeWordPath)) {
-        const resourcesPath = path.join(process.resourcesPath, 'type_word.exe');
-        if (fs.existsSync(resourcesPath)) {
-          typeWordPath = resourcesPath;
-          console.log('🔍 Found type_word in resources:', typeWordPath);
-        } else {
-          // Fallback to dist directory (for development)
-          typeWordPath = path.join(__dirname, '..', 'dist', 'type_word.exe');
-          console.log('🔍 Trying dist path:', typeWordPath);
+      // Find the first existing path
+      for (const testPath of possiblePaths) {
+        console.log('🔍 Checking path:', testPath);
+        if (fs.existsSync(testPath)) {
+          typeWordPath = testPath;
+          console.log('✅ Found type_word.exe at:', typeWordPath);
+          break;
         }
+      }
+      
+      if (!typeWordPath) {
+        console.log('❌ type_word.exe not found in any expected location');
+        console.log('Expected locations:');
+        possiblePaths.forEach(p => console.log('  -', p));
+        return;
       }
     } else {
       // For non-Windows platforms, disable AutoHotkey
@@ -1343,28 +1379,44 @@ async function startAutoHotkeyScript() {
       return;
     }
     
-    // Start the AutoHotkey script
+    // Start the AutoHotkey script with better Windows compatibility
     const { spawn } = require('child_process');
+    console.log('🚀 Starting AutoHotkey process:', typeWordPath);
+    
     autoHotkeyProcess = spawn(typeWordPath, [], {
       detached: true,
-      stdio: 'ignore'
+      stdio: 'pipe', // Use pipe instead of ignore to make process visible
+      windowsHide: false, // Make process visible in task manager
+      shell: false
     });
     
     // Handle process events
     autoHotkeyProcess.on('error', (error) => {
-      console.log('Error starting AutoHotkey script:', error);
+      console.log('❌ Error starting AutoHotkey script:', error);
       autoHotkeyProcess = null;
     });
     
     autoHotkeyProcess.on('exit', (code) => {
-      console.log('AutoHotkey script exited with code:', code);
+      console.log('⚠️ AutoHotkey script exited with code:', code);
       autoHotkeyProcess = null;
     });
     
     // Unref to allow main process to exit independently
     autoHotkeyProcess.unref();
     
-    console.log('AutoHotkey script started successfully - Alt+L typing enabled');
+    // Give the process a moment to start
+    setTimeout(async () => {
+      if (autoHotkeyProcess && !autoHotkeyProcess.killed) {
+        console.log('✅ AutoHotkey script started successfully - Alt+L typing enabled');
+        console.log('🆔 AutoHotkey PID:', autoHotkeyProcess.pid);
+        
+        // Verify the process is actually running
+        const isRunning = await isAutoHotkeyRunning();
+        console.log('🔍 Process verification:', isRunning ? '✅ Visible in task manager' : '❌ Not visible in task manager');
+      } else {
+        console.log('❌ AutoHotkey script failed to start properly');
+      }
+    }, 1000);
     
     // Start monitoring process
     startAutoHotkeyMonitoring();
@@ -1477,19 +1529,8 @@ function registerGlobalShortcuts() {
 
  
 
-  // Ctrl+T: Create new tab (global shortcut)
-  globalShortcut.register('CommandOrControl+T', () => {
-    if (mainWindow) {
-      mainWindow.webContents.send('create-new-tab');
-    }
-  });
-
-  // Ctrl+W: Close current tab (global shortcut)
-  globalShortcut.register('CommandOrControl+W', () => {
-    if (mainWindow) {
-      mainWindow.webContents.send('close-current-tab');
-    }
-  });
+  // Note: Ctrl+T and Ctrl+W are now handled in setupZoomControls() 
+  // to only work when the browser window is focused, not globally
 
   // Ctrl+Shift+`: Screen capture mode
   globalShortcut.register('Alt+S', () => {
@@ -1527,28 +1568,7 @@ function registerGlobalShortcuts() {
   // Start AutoHotkey script for Alt+L functionality and auto-restart
   startAutoHotkeyScript();
 
-  // Google Authentication IPC handlers
-  ipcMain.handle('google-signin', handleGoogleSignIn);
-  ipcMain.handle('google-signout', handleGoogleSignOut);
-  ipcMain.handle('get-auth-status', () => {
-    return {
-      isSignedIn: isGoogleSignedIn,
-      userInfo: googleUserInfo
-    };
-  });
 
-  // Demo authentication IPC handlers (not needed with dialog approach)
-  // ipcMain.on('demo-auth-success', (event, userInfo) => {
-  //   console.log('Received demo-auth-success IPC:', userInfo);
-  //   handleDemoAuthSuccess(userInfo);
-  // });
-
-  // ipcMain.on('demo-auth-cancel', () => {
-  //   console.log('Received demo-auth-cancel IPC');
-  //   if (googleAuthWindow) {
-  //     googleAuthWindow.close();
-  //   }
-  // });
 
   // Verify all hotkeys are registered
   try {
@@ -1651,6 +1671,8 @@ function setupZoomControls() {
         console.log(`Zoom level set to: ${(newZoom * 100).toFixed(0)}%`);
       }
     });
+    
+    // Note: Ctrl+T and Ctrl+W are handled in createWindow() function
   }
 }
 
@@ -1921,183 +1943,13 @@ async function takeScreenshot(captureData) {
   }
 }
 
-// Google Authentication
-let googleAuthWindow = null;
-let isGoogleSignedIn = false;
-let googleUserInfo = null;
-
-// Google OAuth configuration - Using a demo setup
-const GOOGLE_CLIENT_ID = 'demo-client-id.apps.googleusercontent.com';
-const GOOGLE_REDIRECT_URI = 'http://localhost:3000/auth/callback';
-
-// Function to handle Google Sign-In (Demo Version)
-async function handleGoogleSignIn() {
-  console.log('Google Sign-In requested');
-  try {
-    // For Windows compatibility, let's use a simpler approach
-    // Show a confirmation dialog instead of a separate window
-    
-    const result = await dialog.showMessageBox(mainWindow, {
-      type: 'question',
-      buttons: ['Sign In', 'Cancel'],
-      defaultId: 0,
-      title: 'Google Sign-In Demo',
-      message: 'Sign in to StealthBrowser',
-      detail: 'This is a demo authentication. Click "Sign In" to simulate Google sign-in.',
-      icon: null
-    });
-
-    if (result.response === 0) {
-      // User clicked "Sign In"
-      console.log('User confirmed sign-in');
-      const userInfo = {
-        id: 'demo123456',
-        email: 'demo@example.com',
-        name: 'Demo User',
-        picture: 'https://via.placeholder.com/150'
-      };
-      handleDemoAuthSuccess(userInfo);
-    } else {
-      console.log('User cancelled sign-in');
-    }
-
-  } catch (error) {
-    console.error('Error during Google Sign-In:', error);
-    mainWindow.webContents.send('auth-error', { message: 'Failed to start Google Sign-In' });
-  }
-}
-
-// Function to handle OAuth callback
-function handleAuthCallback(url) {
-  try {
-    const urlObj = new URL(url);
-    const code = urlObj.searchParams.get('code');
-    const error = urlObj.searchParams.get('error');
-
-    if (error) {
-      console.error('OAuth error:', error);
-      mainWindow.webContents.send('auth-error', { message: 'Authentication failed' });
-      return;
-    }
-
-    if (code) {
-      // Exchange code for token (simplified - in production, do this server-side)
-      exchangeCodeForToken(code);
-    }
-
-    // Close the auth window
-    if (googleAuthWindow) {
-      googleAuthWindow.close();
-    }
-
-  } catch (error) {
-    console.error('Error handling auth callback:', error);
-    mainWindow.webContents.send('auth-error', { message: 'Failed to process authentication' });
-  }
-}
-
-// Function to handle demo authentication success
-function handleDemoAuthSuccess(userInfo) {
-  console.log('Demo authentication success:', userInfo);
-  try {
-    // Store user info
-    googleUserInfo = userInfo;
-    isGoogleSignedIn = true;
-
-    // Save to secure storage
-    store.set('googleAuth', {
-      isSignedIn: true,
-      userInfo: userInfo,
-      timestamp: Date.now()
-    });
-
-    // Close the auth window
-    if (googleAuthWindow) {
-      googleAuthWindow.close();
-    }
-
-    // Notify renderer
-    console.log('Sending auth-success to renderer from demo:', userInfo);
-    mainWindow.webContents.send('auth-success', userInfo);
-
-  } catch (error) {
-    console.error('Error handling demo auth success:', error);
-    mainWindow.webContents.send('auth-error', { message: 'Failed to complete authentication' });
-  }
-}
-
-// Function to exchange authorization code for access token (Legacy - not used in demo)
-async function exchangeCodeForToken(code) {
-  try {
-    // In a real application, this should be done server-side
-    // For demo purposes, we'll simulate a successful authentication
-    const mockUserInfo = {
-      id: '123456789',
-      email: 'user@example.com',
-      name: 'John Doe',
-      picture: 'https://via.placeholder.com/150'
-    };
-
-    // Store user info
-    googleUserInfo = mockUserInfo;
-    isGoogleSignedIn = true;
-
-    // Save to secure storage
-    store.set('googleAuth', {
-      isSignedIn: true,
-      userInfo: mockUserInfo,
-      timestamp: Date.now()
-    });
-
-    // Notify renderer
-    console.log('Sending auth-success to renderer:', mockUserInfo);
-    mainWindow.webContents.send('auth-success', mockUserInfo);
-
-  } catch (error) {
-    console.error('Error exchanging code for token:', error);
-    mainWindow.webContents.send('auth-error', { message: 'Failed to complete authentication' });
-  }
-}
-
-// Function to handle Google Sign-Out
-function handleGoogleSignOut() {
-  try {
-    // Clear stored authentication
-    store.delete('googleAuth');
-    
-    // Reset state
-    isGoogleSignedIn = false;
-    googleUserInfo = null;
-
-    // Notify renderer
-    mainWindow.webContents.send('auth-signout');
-
-  } catch (error) {
-    console.error('Error during Google Sign-Out:', error);
-    mainWindow.webContents.send('auth-error', { message: 'Failed to sign out' });
-  }
-}
-
-// Function to check if user is already signed in
-function checkGoogleAuthStatus() {
-  try {
-    const authData = store.get('googleAuth');
-    if (authData && authData.isSignedIn) {
-      isGoogleSignedIn = true;
-      googleUserInfo = authData.userInfo;
-      mainWindow.webContents.send('auth-success', authData.userInfo);
-    }
-  } catch (error) {
-    console.error('Error checking auth status:', error);
-  }
-}
 
 // App event handlers
 app.whenReady().then(() => {
   // Performance optimizations for faster loading
   app.commandLine.appendSwitch('enable-gpu-rasterization');
   app.commandLine.appendSwitch('enable-zero-copy');
-  app.commandLine.appendSwitch('enable-gpu-memory-buffer-video-frames');
+  // app.commandLine.appendSwitch('enable-gpu-memory-buffer-video-frames'); // REMOVED: Conflicts with disable setting below
   app.commandLine.appendSwitch('enable-accelerated-2d-canvas');
   app.commandLine.appendSwitch('enable-accelerated-jpeg-decoding');
   app.commandLine.appendSwitch('enable-accelerated-video-decode');
@@ -2192,8 +2044,8 @@ app.whenReady().then(() => {
   app.commandLine.appendSwitch('disable-features', 'ApplicationCapturePermission');
   app.commandLine.appendSwitch('disable-features', 'BrowserCapturePermission');
   
-  // Set environment variables to force software rendering and prevent screen capture
-  process.env.CHROME_FLAGS = '--disable-gpu --disable-gpu-sandbox --disable-software-rasterizer --disable-features=ScreenCapture,DisplayCapture,DesktopCapture,GetDisplayMedia,ScreenSharing,WebRTC,MediaStream,CanvasCapture,VideoCapture,AudioCapture,ScreenRecording,ScreenMirroring,RemoteDesktop,ScreenCaptureAPI,DisplayMediaAPI,GetUserMedia,MediaDevices,ScreenCapturePermission,DisplayCapturePermission --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding --disable-features=TranslateUI --disable-ipc-flooding-protection --max-active-webgl-contexts=0 --disable-gpu-process-crash-limit --disable-gpu-watchdog --disable-gpu-driver-bug-workarounds --disable-gpu-memory-buffer-video-frames --disable-features=VizDisplayCompositor --disable-component-extensions-with-background-pages --disable-default-apps --disable-extensions --disable-plugins --disable-plugins-discovery --disable-preconnect --disable-translate --disable-sync --disable-background-networking --disable-client-side-phishing-detection --disable-component-update --disable-domain-reliability --disable-features=BlinkGenPropertyTrees --disable-hang-monitor --disable-prompt-on-repost';
+  // Set environment variables to prevent screen capture (FIXED: Removed conflicting GPU settings)
+  process.env.CHROME_FLAGS = '--disable-features=ScreenCapture,DisplayCapture,DesktopCapture,GetDisplayMedia,ScreenSharing,CanvasCapture,ScreenRecording,ScreenMirroring,RemoteDesktop,ScreenCaptureAPI,DisplayMediaAPI,ScreenCapturePermission,DisplayCapturePermission --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding --disable-features=TranslateUI --disable-ipc-flooding-protection --max-active-webgl-contexts=0 --disable-gpu-process-crash-limit --disable-gpu-watchdog --disable-gpu-driver-bug-workarounds --disable-features=VizDisplayCompositor --disable-component-extensions-with-background-pages --disable-default-apps --disable-extensions --disable-plugins --disable-plugins-discovery --disable-preconnect --disable-translate --disable-sync --disable-background-networking --disable-client-side-phishing-detection --disable-component-update --disable-domain-reliability --disable-features=BlinkGenPropertyTrees --disable-hang-monitor --disable-prompt-on-repost';
   process.env.ELECTRON_DISABLE_GPU = '1';
   process.env.ELECTRON_DISABLE_SCREEN_CAPTURE = '1';
   process.env.ELECTRON_DISABLE_SCREEN_SHARING = '1';
@@ -2266,8 +2118,6 @@ app.whenReady().then(() => {
 
   // Auto-restart functionality is now handled by type_word.ahk
 
-  // Check Google authentication status
-  checkGoogleAuthStatus();
 
   // No notification needed for startup
 
