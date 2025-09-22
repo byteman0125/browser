@@ -750,15 +750,9 @@ class StealthBrowser {
             item.className = 'autocomplete-item';
             item.dataset.index = index;
             
-            const timeAgo = this.getTimeAgo(suggestion.lastVisited);
-            
             item.innerHTML = `
                 <div class="autocomplete-item-title">${this.escapeHtml(suggestion.title)}</div>
                 <div class="autocomplete-item-url">${this.escapeHtml(suggestion.url)}</div>
-                <div class="autocomplete-item-meta">
-                    <span class="autocomplete-item-count">${suggestion.count} visits</span>
-                    <span class="autocomplete-item-time">${timeAgo}</span>
-                </div>
             `;
             
             item.addEventListener('click', () => {

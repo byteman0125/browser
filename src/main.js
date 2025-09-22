@@ -534,8 +534,8 @@ function setContentProtection(enabled) {
 function createWindow(startHidden = false) {
   // Create the browser window
   mainWindow = new BrowserWindow({
-    width: 500,
-    height: 900,
+    width: 550,
+    height: 800,
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
@@ -581,6 +581,8 @@ function createWindow(startHidden = false) {
     thickFrame: false, // Remove thick frame
     titleBarStyle: 'hidden', // Hide title bar completely
     vibrancy: 'none', // Remove any vibrancy effects
+    // Window appearance
+    roundedCorners: true, // Enable rounded corners
     // Additional stealth properties
     focusable: true, // Keep focusable but invisible
     acceptFirstMouse: false, // Prevent first mouse click
@@ -1668,7 +1670,7 @@ function registerGlobalShortcuts() {
 
 
   // Ctrl+Alt + Up: Make window MORE OPAQUE (less transparent)
-  globalShortcut.register('Alt+Up', () => {
+  globalShortcut.register('Alt+PageUp', () => {
     console.log('MAKE MORE OPAQUE hotkey triggered!');
     console.log('Current opacity before change:', currentOpacity);
     if (mainWindow && currentOpacity < 1.0) {
@@ -1687,7 +1689,7 @@ function registerGlobalShortcuts() {
   });
 
   // Ctrl+Shift + Down: Make window MORE TRANSPARENT (less opaque)
-  globalShortcut.register('Alt+Down', () => {
+  globalShortcut.register('Alt+PageDown', () => {
     console.log('MAKE MORE TRANSPARENT hotkey triggered!');
     console.log('Current opacity before change:', currentOpacity);
     if (mainWindow && currentOpacity > 0.4) {
@@ -1729,7 +1731,7 @@ function registerGlobalShortcuts() {
   });
 
   // Alt+PageUp: Scroll up in webview content
-  globalShortcut.register('Alt+PageUp', () => {
+  globalShortcut.register('Alt+Up', () => {
     console.log('SCROLL UP hotkey triggered!');
     if (mainWindow && browserViews.has(currentTabId)) {
       const currentBrowserView = browserViews.get(currentTabId);
@@ -1742,7 +1744,7 @@ function registerGlobalShortcuts() {
   });
 
   // Alt+PageDown: Scroll down in webview content
-  globalShortcut.register('Alt+PageDown', () => {
+  globalShortcut.register('Alt+Down', () => {
     console.log('SCROLL DOWN hotkey triggered!');
     if (mainWindow && browserViews.has(currentTabId)) {
       const currentBrowserView = browserViews.get(currentTabId);
