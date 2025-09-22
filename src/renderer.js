@@ -9,6 +9,10 @@ class StealthBrowser {
         this.currentTabId = 0;
         this.tabs = new Map();
         this.isCreatingTab = false; // Flag to prevent duplicate tab creation
+        this.isHandlingQuickLink = false; // Flag to prevent multiple quick link clicks
+        this.isNavigating = false; // Flag to prevent concurrent navigation
+        this.navigationQueue = []; // Queue for pending navigation requests
+        this.loadingStates = new Map(); // Track loading state per tab
         
         this.init();
     }
@@ -19,6 +23,7 @@ class StealthBrowser {
         this.setupWindowControls();
         this.loadSettings();
         this.initializeFirstTab();
+        this.checkAuthStatus();
     }
 
     setupEventListeners() {
@@ -103,6 +108,24 @@ class StealthBrowser {
             });
         }
 
+        // Google Authentication
+        const signinBtn = document.getElementById('signin-btn');
+        if (signinBtn) {
+            signinBtn.addEventListener('click', () => {
+                console.log('Google Sign-In button clicked');
+                ipcRenderer.invoke('google-signin');
+            });
+        } else {
+            console.error('Sign-in button not found!');
+        }
+
+        const signoutBtn = document.getElementById('signout-btn');
+        if (signoutBtn) {
+            signoutBtn.addEventListener('click', () => {
+                ipcRenderer.invoke('google-signout');
+            });
+        }
+
         // Google account management
         const googleAccountBtn = document.getElementById('google-account-btn');
         if (googleAccountBtn) {
@@ -167,6 +190,13 @@ class StealthBrowser {
             this.setStealthMode(enabled);
         });
 
+        // Handle tab restoration
+        ipcRenderer.on('tab-restored', (event, { tabId, url, title }) => {
+            console.log('Tab restored:', { tabId, url, title });
+            this.tabs.set(tabId, { id: tabId, title, url });
+            this.createTabElement(tabId);
+        });
+
         // Listen for global keyboard shortcuts from main process
         ipcRenderer.on('create-new-tab', () => {
             console.log('Received create-new-tab from main process');
@@ -178,16 +208,28 @@ class StealthBrowser {
             this.closeCurrentTab();
         });
 
-         // Hide browser when clicking on empty areas
-         const browserContainer = document.querySelector('.browser-container');
-         if (browserContainer) {
-             browserContainer.addEventListener('click', (e) => {
-                 // Only hide if clicking on the container itself, not on interactive elements
-                 if (e.target === browserContainer) {
-                     ipcRenderer.invoke('hide-browser');
-                 }
-             });
-         }
+        // Type word from clipboard feedback events
+        ipcRenderer.on('type-word-success', (event, message) => {
+            this.showTypeWordNotification(message, 'success');
+        });
+
+        ipcRenderer.on('type-word-error', (event, error) => {
+            this.showTypeWordNotification(error, 'error');
+        });
+
+        // Handle quick navigation buttons
+        this.setupQuickNavButtons();
+
+        // Hide browser when clicking on empty areas
+        const browserContainer = document.querySelector('.browser-container');
+        if (browserContainer) {
+            browserContainer.addEventListener('click', (e) => {
+                // Only hide if clicking on the container itself, not on interactive elements
+                if (e.target === browserContainer) {
+                    ipcRenderer.invoke('hide-browser');
+                }
+            });
+        }
 
     }
 
@@ -220,6 +262,9 @@ class StealthBrowser {
     setupBrowserViewListeners() {
         // Listen for BrowserView events from main process
         ipcRenderer.on('browser-view-loading', (event, { tabId, loading }) => {
+            // Update loading state for the tab
+            this.loadingStates.set(tabId, loading);
+            
             if (tabId === this.currentTabId) {
                 if (loading) {
                     this.showLoading();
@@ -228,8 +273,27 @@ class StealthBrowser {
                     this.hideLoading();
                     this.statusText.textContent = 'Ready';
                     this.updateNavigationButtons();
+                    
+                    // Process queued navigation requests when loading completes
+                    setTimeout(() => {
+                        this.processNavigationQueue();
+                    }, 500);
                 }
             }
+        });
+
+        // Google Authentication listeners
+        ipcRenderer.on('auth-success', (event, userInfo) => {
+            console.log('Renderer received auth-success event:', userInfo);
+            this.handleAuthSuccess(userInfo);
+        });
+
+        ipcRenderer.on('auth-signout', (event) => {
+            this.handleAuthSignOut();
+        });
+
+        ipcRenderer.on('auth-error', (event, error) => {
+            this.handleAuthError(error);
         });
 
         ipcRenderer.on('browser-view-url', (event, { tabId, url }) => {
@@ -285,8 +349,50 @@ class StealthBrowser {
         return 'https://www.google.com/search?q=' + encodeURIComponent(input);
     }
 
-    navigateTo(url) {
-        ipcRenderer.invoke('browser-view-navigate', { tabId: this.currentTabId, url });
+    async navigateTo(url) {
+        // Check if we're already navigating
+        if (this.isNavigating) {
+            console.log('Navigation already in progress, queuing request:', url);
+            this.navigationQueue.push({ tabId: this.currentTabId, url });
+            return;
+        }
+
+        // Check if current tab is loading
+        const isLoading = this.loadingStates.get(this.currentTabId);
+        if (isLoading) {
+            console.log('Tab is currently loading, queuing navigation request:', url);
+            this.navigationQueue.push({ tabId: this.currentTabId, url });
+            return;
+        }
+
+        try {
+            this.isNavigating = true;
+            console.log('Navigating to:', url, 'in tab:', this.currentTabId);
+            
+            await ipcRenderer.invoke('browser-view-navigate', { tabId: this.currentTabId, url });
+            
+            // Process queued navigation requests after a short delay
+            setTimeout(() => {
+                this.processNavigationQueue();
+            }, 1000);
+            
+        } catch (error) {
+            console.error('Navigation failed:', error);
+        } finally {
+            this.isNavigating = false;
+        }
+    }
+
+    async processNavigationQueue() {
+        if (this.navigationQueue.length === 0 || this.isNavigating) {
+            return;
+        }
+
+        const nextNavigation = this.navigationQueue.shift();
+        if (nextNavigation) {
+            console.log('Processing queued navigation:', nextNavigation.url);
+            await this.navigateTo(nextNavigation.url);
+        }
     }
 
     updateAddressBar() {
@@ -426,6 +532,9 @@ class StealthBrowser {
         if (firstTab) {
             firstTab.classList.add('active');
         }
+        
+        // Show the blank page overlay for the new tab
+        this.toggleBlankPageOverlay(true);
     }
 
     // Tab management methods
@@ -909,6 +1018,84 @@ class StealthBrowser {
         }
     }
 
+    // Setup quick navigation buttons
+    setupQuickNavButtons() {
+        const quickNavButtons = document.querySelectorAll('.quick-nav-btn');
+        console.log('Setting up quick nav buttons:', quickNavButtons.length);
+        quickNavButtons.forEach((button, index) => {
+            const url = button.getAttribute('data-url');
+            console.log(`Quick nav button ${index}:`, url, button);
+            
+            // Add click event listener
+            button.addEventListener('click', async (e) => {
+                console.log('Quick nav button click event triggered!', e);
+                e.preventDefault();
+                e.stopPropagation();
+                console.log('Quick nav button clicked:', url);
+                await this.handleQuickLinkClick(url);
+            });
+        });
+    }
+
+    async handleQuickLinkClick(url) {
+        // Prevent multiple rapid clicks
+        if (this.isHandlingQuickLink) {
+            console.log('Already handling quick link, ignoring click');
+            return;
+        }
+        
+        this.isHandlingQuickLink = true;
+        
+        try {
+            console.log('Handling quick link click for URL:', url);
+            
+            // Add a small delay to prevent race conditions
+            await new Promise(resolve => setTimeout(resolve, 100));
+            
+            // Check if current tab is a new tab (blank page)
+            const currentUrl = await ipcRenderer.invoke('get-current-tab-url', this.currentTabId);
+            const isCurrentTabNew = currentUrl === '' || currentUrl === null;
+            
+            console.log('Current tab URL:', currentUrl, 'Is new tab:', isCurrentTabNew);
+            
+            if (isCurrentTabNew) {
+                // Current tab is new tab - navigate in current tab
+                console.log('Navigating in current tab (new tab)');
+                this.navigateTo(url);
+            } else {
+                // Current tab is not new - check if target URL already exists in another tab
+                console.log('Checking for existing tab with URL:', url);
+                const existingTabId = await ipcRenderer.invoke('find-tab-with-url', url);
+                
+                if (existingTabId !== null) {
+                    // Target URL already exists - switch to that tab
+                    console.log('Switching to existing tab:', existingTabId);
+                    await this.switchToTab(existingTabId);
+                } else {
+                    // Target URL doesn't exist - create new tab
+                    console.log('Creating new tab for URL:', url);
+                    await this.createNewTab(url);
+                }
+            }
+        } catch (error) {
+            console.error('Error handling quick link click:', error);
+            console.error('Error details:', error.message, error.stack);
+            
+            // Fallback to simple navigation
+            console.log('Falling back to simple navigation');
+            try {
+                this.navigateTo(url);
+            } catch (fallbackError) {
+                console.error('Fallback navigation also failed:', fallbackError);
+            }
+        } finally {
+            // Reset the flag after a delay
+            setTimeout(() => {
+                this.isHandlingQuickLink = false;
+            }, 500);
+        }
+    }
+
     // Toggle blank page overlay
     toggleBlankPageOverlay(show) {
         const overlay = document.getElementById('blank-page-overlay');
@@ -917,6 +1104,139 @@ class StealthBrowser {
             console.log('Blank page overlay toggled:', show ? 'shown' : 'hidden');
         } else {
             console.log('Blank page overlay element not found');
+        }
+    }
+
+    // Google Authentication handlers
+    handleAuthSuccess(userInfo) {
+        console.log('Google authentication successful:', userInfo);
+        console.log('Updating UI for signed-in state...');
+        
+        // Update UI to show signed-in state
+        const signinBtn = document.getElementById('signin-btn');
+        const signoutBtn = document.getElementById('signout-btn');
+        const userInfoDiv = document.getElementById('user-info');
+        
+        console.log('UI elements found:', {
+            signinBtn: !!signinBtn,
+            signoutBtn: !!signoutBtn,
+            userInfoDiv: !!userInfoDiv
+        });
+        
+        if (signinBtn) {
+            signinBtn.style.display = 'none';
+            console.log('Sign-in button hidden');
+        }
+        if (signoutBtn) {
+            signoutBtn.style.display = 'flex';
+            console.log('Sign-out button shown');
+        }
+        if (userInfoDiv) {
+            userInfoDiv.textContent = userInfo.name || userInfo.email;
+            userInfoDiv.style.display = 'block';
+            console.log('User info updated:', userInfoDiv.textContent);
+        }
+        
+        // Show success notification
+        this.showNotification('Signed in with Google!', 'success');
+    }
+
+    handleAuthSignOut() {
+        console.log('Google sign-out successful');
+        
+        // Update UI to show signed-out state
+        const signinBtn = document.getElementById('signin-btn');
+        const signoutBtn = document.getElementById('signout-btn');
+        const userInfoDiv = document.getElementById('user-info');
+        
+        if (signinBtn) signinBtn.style.display = 'flex';
+        if (signoutBtn) signoutBtn.style.display = 'none';
+        if (userInfoDiv) {
+            userInfoDiv.textContent = '';
+            userInfoDiv.style.display = 'none';
+        }
+        
+        // Show sign-out notification
+        this.showNotification('Signed out', 'info');
+    }
+
+    handleAuthError(error) {
+        console.error('Google authentication error:', error);
+        
+        // Show error notification
+        this.showNotification(`Authentication error: ${error.message}`, 'error');
+    }
+
+    showNotification(message, type = 'info') {
+        console.log('Showing notification:', message, type);
+        // Create notification element
+        const notification = document.createElement('div');
+        notification.className = `notification notification-${type}`;
+        notification.textContent = message;
+        
+        // Style the notification - more concise and modern
+        Object.assign(notification.style, {
+            position: 'fixed',
+            top: '16px',
+            right: '16px',
+            padding: '10px 16px',
+            borderRadius: '8px',
+            color: 'white',
+            fontSize: '13px',
+            fontWeight: '500',
+            zIndex: '10000',
+            maxWidth: '280px',
+            wordWrap: 'break-word',
+            opacity: '0',
+            transform: 'translateX(100%) scale(0.9)',
+            transition: 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
+            backdropFilter: 'blur(10px)',
+            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)'
+        });
+        
+        // Set background color based on type
+        switch (type) {
+            case 'success':
+                notification.style.background = 'linear-gradient(135deg, rgba(76, 175, 80, 0.9), rgba(69, 160, 73, 0.9))';
+                break;
+            case 'error':
+                notification.style.background = 'linear-gradient(135deg, rgba(244, 67, 54, 0.9), rgba(211, 47, 47, 0.9))';
+                break;
+            case 'info':
+            default:
+                notification.style.background = 'linear-gradient(135deg, rgba(33, 150, 243, 0.9), rgba(25, 118, 210, 0.9))';
+                break;
+        }
+        
+        // Add to document
+        document.body.appendChild(notification);
+        
+        // Animate in
+        setTimeout(() => {
+            notification.style.opacity = '1';
+            notification.style.transform = 'translateX(0) scale(1)';
+        }, 100);
+        
+        // Auto-remove after 2.5 seconds
+        setTimeout(() => {
+            notification.style.opacity = '0';
+            notification.style.transform = 'translateX(100%) scale(0.9)';
+            setTimeout(() => {
+                if (notification.parentNode) {
+                    notification.parentNode.removeChild(notification);
+                }
+            }, 400);
+        }, 2500);
+    }
+
+    async checkAuthStatus() {
+        try {
+            const authStatus = await ipcRenderer.invoke('get-auth-status');
+            if (authStatus.isSignedIn && authStatus.userInfo) {
+                this.handleAuthSuccess(authStatus.userInfo);
+            }
+        } catch (error) {
+            console.error('Error checking auth status:', error);
         }
     }
 }

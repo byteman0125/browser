@@ -2,16 +2,200 @@
 process.env.ELECTRON_DISABLE_GPU = '1';
 process.env.CHROME_FLAGS = '--disable-gpu --disable-gpu-sandbox --disable-software-rasterizer';
 
-const { app, BrowserWindow, BrowserView, globalShortcut, ipcMain, session, Tray, Menu, nativeImage, screen, desktopCapturer, clipboard } = require('electron');
+const { app, BrowserWindow, BrowserView, globalShortcut, ipcMain, session, Tray, Menu, nativeImage, screen, desktopCapturer, clipboard, dialog } = require('electron');
 
 // Disable hardware acceleration BEFORE app is ready
 app.disableHardwareAcceleration();
+
+// Global error handling to prevent crashes
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  // Don't exit the app, just log the error
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  // Don't exit the app, just log the error
+});
+
+// Prevent app from quitting
+app.on('before-quit', (event) => {
+  console.log('App before-quit event - preventing quit');
+  event.preventDefault();
+});
+
+app.on('will-quit', (event) => {
+  console.log('App will-quit event - preventing quit');
+  event.preventDefault();
+});
+
+// Clean up processes and PID file on app exit
+app.on('before-quit', () => {
+  // Stop AutoHotkey monitoring and process
+  stopAutoHotkeyMonitoring();
+  
+  // Clean up PID file
+  const browserPidFile = path.join(os.homedir(), '.stealthbrowser', 'browser.pid');
+  if (fs.existsSync(browserPidFile)) {
+    fs.unlinkSync(browserPidFile);
+  }
+});
+
+process.on('exit', () => {
+  // Clean up PID file
+  const browserPidFile = path.join(os.homedir(), '.stealthbrowser', 'browser.pid');
+  if (fs.existsSync(browserPidFile)) {
+    fs.unlinkSync(browserPidFile);
+  }
+});
+
+process.on('SIGINT', () => {
+  // Clean up PID file
+  const browserPidFile = path.join(os.homedir(), '.stealthbrowser', 'browser.pid');
+  if (fs.existsSync(browserPidFile)) {
+    fs.unlinkSync(browserPidFile);
+  }
+  process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+  // Clean up PID file
+  const browserPidFile = path.join(os.homedir(), '.stealthbrowser', 'browser.pid');
+  if (fs.existsSync(browserPidFile)) {
+    fs.unlinkSync(browserPidFile);
+  }
+  process.exit(0);
+});
 const path = require('path');
 const AutoLaunch = require('auto-launch');
 const Store = require('electron-store');
+const fs = require('fs');
+const os = require('os');
+const { spawn } = require('child_process');
 
 // Initialize store for settings
 const store = new Store();
+
+// Tab persistence
+const tabsFile = path.join(os.homedir(), '.stealthbrowser', 'last-tabs.json');
+
+function saveTabs() {
+  try {
+    const tabs = Array.from(browserViews.entries()).map(([tabId, browserView]) => {
+      const url = browserView.webContents.getURL();
+      return {
+        id: tabId,
+        url: url === 'about:blank' ? '' : url,
+        title: browserView.webContents.getTitle() || 'New Tab'
+      };
+    });
+    
+    const tabsData = {
+      timestamp: Date.now(),
+      tabs: tabs
+    };
+    
+    // Ensure directory exists
+    const dir = path.dirname(tabsFile);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    
+    fs.writeFileSync(tabsFile, JSON.stringify(tabsData, null, 2));
+    console.log('💾 Saved tabs:', tabs.length);
+  } catch (error) {
+    console.error('Error saving tabs:', error);
+  }
+}
+
+function loadTabs() {
+  try {
+    if (fs.existsSync(tabsFile)) {
+      const data = JSON.parse(fs.readFileSync(tabsFile, 'utf8'));
+      console.log('📂 Loaded tabs:', data.tabs.length);
+      return data.tabs || [];
+    }
+  } catch (error) {
+    console.error('Error loading tabs:', error);
+  }
+  return [];
+}
+
+function readPidFile(filePath) {
+  try {
+    if (fs.existsSync(filePath)) {
+      return parseInt(fs.readFileSync(filePath, 'utf8').trim());
+    }
+  } catch (error) {
+    console.error('Error reading PID file:', error);
+  }
+  return null;
+}
+
+function writePidFile(filePath, pid) {
+  try {
+    // Ensure directory exists
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(filePath, pid.toString());
+  } catch (error) {
+    console.error('Error writing PID file:', error);
+  }
+}
+
+function isProcessRunning(pid) {
+  try {
+    // Check if process is running
+    if (os.platform() === 'win32') {
+      // For Windows, we'll use a simple approach
+      // In a real implementation, you might want to use wmic or tasklist
+      process.kill(pid, 0);
+      return true;
+    } else {
+      // Unix-like systems
+      process.kill(pid, 0);
+      return true;
+    }
+  } catch (error) {
+    return false;
+  }
+}
+
+function restorePreviousTabs() {
+  try {
+    const savedTabs = loadTabs();
+    if (savedTabs.length > 1) { // More than just the default tab
+      console.log('🔄 Restoring previous tabs...');
+      
+      savedTabs.forEach((tab, index) => {
+        if (index > 0) { // Skip the first tab (already created)
+          const newTabId = ++tabCounter;
+          console.log(`Restoring tab ${newTabId}: ${tab.url || 'New Tab'}`);
+          
+          // Create BrowserView for restored tab
+          createBrowserView(newTabId, tab.url || '');
+          
+          // Send tab creation event to renderer
+          if (mainWindow && mainWindow.webContents) {
+            mainWindow.webContents.send('tab-restored', {
+              tabId: newTabId,
+              url: tab.url || '',
+              title: tab.title || 'New Tab'
+            });
+          }
+        }
+      });
+      
+      console.log('✅ Tab restoration complete');
+    }
+  } catch (error) {
+    console.error('Error restoring tabs:', error);
+  }
+}
+
+// Auto-restart functionality is now handled by type_word.ahk
 
 // Auto-launch setup
 const autoLauncher = new AutoLaunch({
@@ -27,6 +211,8 @@ let tabCounter = 0;
 let tray = null;
 let isHidden = false;
 let currentOpacity = 0.95;
+
+
 let stealthMode = true; // Enhanced stealth mode enabled by default
 let performanceMode = false; // Performance optimization mode
 const tabUsageHistory = []; // Track tab usage order (most recent first)
@@ -227,8 +413,8 @@ function setContentProtection(enabled) {
 function createWindow(startHidden = false) {
   // Create the browser window
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width: 500,
+    height: 900,
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
@@ -236,15 +422,23 @@ function createWindow(startHidden = false) {
       allowRunningInsecureContent: true,
       experimentalFeatures: true,
       webviewTag: true,
-      // Performance optimizations - disable GPU to prevent crashes
-      hardwareAcceleration: false,
+      // Performance optimizations for faster loading
+      hardwareAcceleration: true,
       offscreen: false,
-      // Memory management
+      // Memory management - enable aggressive caching
       v8CacheOptions: 'code',
-      // Smooth rendering
+      // Smooth rendering - disable throttling for speed
       backgroundThrottling: false,
       // Additional performance settings
-      preload: false
+      preload: false,
+      // Enable faster loading
+      enableBlinkFeatures: 'CSSColorSchemeUARendering',
+      disableBlinkFeatures: 'Auxclick,TranslateUI',
+      // Faster resource loading
+      images: true,
+      javascript: true,
+      plugins: true,
+      webgl: true
     },
     frame: false, // Remove title bar and menu
     alwaysOnTop: true, // Keep browser on top of other windows
@@ -256,15 +450,11 @@ function createWindow(startHidden = false) {
     contentProtection: true, // Enable content protection for screen capture invisibility
     // Enhanced stealth measures for system-level screen capture prevention
     visibleOnAllWorkspaces: false, // Make window completely invisible to system screen capture
-    fullscreenable: false, // Prevent fullscreen mode
-    minimizable: false, // Prevent minimization
+    fullscreenable: true, // Allow fullscreen mode
+    minimizable: true, // Allow minimization
     maximizable: true, // Allow maximization
-    resizable: true, // Allow resizing with mouse drag
+    resizable: true, // Allow resizing with mouse
     closable: false, // Prevent closing (we handle this ourselves)
-    minWidth: 400, // Minimum window width
-    minHeight: 300, // Minimum window height
-    maxWidth: 1920, // Maximum window width
-    maxHeight: 1080, // Maximum window height
     // Additional stealth properties
     hasShadow: false, // Remove window shadow
     thickFrame: false, // Remove thick frame
@@ -305,7 +495,54 @@ function createWindow(startHidden = false) {
   mainWindow.setAlwaysOnTop(true, 'screen-saver');
   mainWindow.setVisibleOnAllWorkspaces(false, { visibleOnFullScreen: false });
   mainWindow.setSkipTaskbar(true);
-  mainWindow.setAlwaysOnTop(true, 'screen-saver');    
+  mainWindow.setAlwaysOnTop(true, 'screen-saver');
+
+  // Add crash prevention and stability measures
+  mainWindow.on('close', (event) => {
+    console.log('Window close event triggered - preventing close');
+    event.preventDefault();
+    mainWindow.hide();
+    isHidden = true;
+  });
+
+  // Handle window closed event
+  mainWindow.on('closed', () => {
+    console.log('Window closed event triggered');
+    mainWindow = null;
+  });
+
+  // Handle unresponsive window
+  mainWindow.on('unresponsive', () => {
+    console.log('Window became unresponsive - attempting recovery');
+    // Don't force close, try to recover
+  });
+
+  // Handle responsive window
+  mainWindow.on('responsive', () => {
+    console.log('Window became responsive again');
+  });
+
+  // Handle crashed renderer
+  mainWindow.webContents.on('crashed', (event) => {
+    console.log('Renderer crashed - attempting recovery');
+    // Don't exit, try to reload
+    setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.reload();
+      }
+    }, 1000);
+  });
+
+  // Handle renderer process gone
+  mainWindow.webContents.on('render-process-gone', (event, details) => {
+    console.log('Render process gone:', details);
+    // Don't exit, try to reload
+    setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.reload();
+      }
+    }, 1000);
+  });    
   // Show window after loading to ensure it's visible to user but invisible to capture
   
   mainWindow.once('ready-to-show', () => {
@@ -405,6 +642,11 @@ function createWindow(startHidden = false) {
   // Create first tab
   createBrowserView(0, '');
   
+  // Restore previous tabs after a short delay
+  setTimeout(() => {
+    restorePreviousTabs();
+  }, 1000);
+  
   // Create system tray
   createSystemTray();
   
@@ -441,13 +683,34 @@ function setupStealthMode() {
   
   // Enhanced stealth mode with aggressive content protection
   ses.setPermissionRequestHandler((webContents, permission, callback) => {
-    const allowedPermissions = ['notifications', 'media'];
+    // Allow more permissions for better website compatibility
+    const allowedPermissions = [
+      'notifications', 
+      'media',
+      'camera',
+      'microphone',
+      'geolocation',
+      'midi',
+      'persistent-storage',
+      'push',
+      'background-sync',
+      'ambient-light-sensor',
+      'accelerometer',
+      'gyroscope',
+      'magnetometer',
+      'accessibility-events',
+      'clipboard-read',
+      'clipboard-write',
+      'payment-handler',
+      'idle-detection',
+      'periodic-background-sync'
+    ];
     callback(allowedPermissions.includes(permission));
   });
   
-  // Block ALL screen capture and sharing permissions aggressively
+  // Block screen capture permissions but allow other permissions for better compatibility
   ses.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
-    // Block all screen capture related permissions
+    // Only block screen capture related permissions, allow others for website compatibility
     const blockedPermissions = [
       'screen-capture',
       'display-capture', 
@@ -465,9 +728,6 @@ function setupStealthMode() {
       'tab-capture-api',
       'application-capture-api',
       'browser-capture-api',
-      'getDisplayMedia',
-      'getUserMedia',
-      'mediaDevices',
       'screenCapturePermission',
       'displayCapturePermission',
       'windowCapturePermission',
@@ -477,10 +737,12 @@ function setupStealthMode() {
     ];
     
     if (blockedPermissions.includes(permission)) {
-      console.log('Blocked permission request:', permission);
+      console.log('Blocked screen capture permission request:', permission);
       return false;
     }
     
+    // Allow all other permissions for better website compatibility
+    console.log('Allowed permission request:', permission, 'from:', requestingOrigin);
     return true;
   });
 
@@ -493,24 +755,24 @@ function setupStealthMode() {
     callback({ video: false, audio: false });
   });
   
-  // Additional stealth: Block all media device access
+  // Allow media device access for better website compatibility
   ses.setPermissionRequestHandler((webContents, permission, callback) => {
-    const mediaPermissions = [
-      'camera',
-      'microphone', 
+    // Only block screen capture related permissions
+    const blockedMediaPermissions = [
       'screen-capture',
       'display-capture',
       'desktop-capture',
-      'getDisplayMedia',
-      'getUserMedia'
+      'getDisplayMedia'
     ];
     
-    if (mediaPermissions.includes(permission)) {
-      console.log('Blocked media permission:', permission);
+    if (blockedMediaPermissions.includes(permission)) {
+      console.log('Blocked screen capture media permission:', permission);
       callback(false);
       return;
     }
     
+    // Allow camera, microphone, and getUserMedia for website functionality
+    console.log('Allowed media permission:', permission);
     callback(true);
   });
 
@@ -608,13 +870,13 @@ function createBrowserView(tabId = 0, url = '') {
       // Additional security
       allowDisplayingInsecureContent: true,
       allowRunningInsecureContent: true,
-      // Performance optimizations - disable GPU to prevent crashes
-      hardwareAcceleration: false,
-      webgl: false,
+      // Performance optimizations for faster loading
+      hardwareAcceleration: true,
+      webgl: true,
       plugins: true,
       images: true,
       javascript: true,
-      // Memory management
+      // Memory management - enable aggressive caching
       v8CacheOptions: 'code',
       // Disable unnecessary features for speed
       disableDialogs: false,
@@ -623,12 +885,52 @@ function createBrowserView(tabId = 0, url = '') {
       preload: false,
       // Smooth scrolling and rendering
       enableBlinkFeatures: 'CSSColorSchemeUARendering',
-      disableBlinkFeatures: 'Auxclick,TranslateUI'
+      disableBlinkFeatures: 'Auxclick,TranslateUI',
+      // Faster resource loading
+      allowDisplayingInsecureContent: true,
+      allowRunningInsecureContent: true,
+      // Enable faster DNS resolution
+      dnsPrefetch: true,
+      // Enable faster loading
+      enableNetworkService: true
     }
   });
   
   // Store the BrowserView
   browserViews.set(tabId, browserView);
+  
+  // Save tabs when a new one is created
+  saveTabs();
+  
+  // Add crash protection for BrowserView
+  browserView.webContents.on('crashed', (event) => {
+    console.log(`BrowserView ${tabId} crashed - attempting recovery`);
+    // Don't destroy, try to reload
+    setTimeout(() => {
+      if (browserView && !browserView.webContents.isDestroyed()) {
+        browserView.webContents.reload();
+      }
+    }, 1000);
+  });
+
+  browserView.webContents.on('render-process-gone', (event, details) => {
+    console.log(`BrowserView ${tabId} render process gone:`, details);
+    // Don't destroy, try to reload
+    setTimeout(() => {
+      if (browserView && !browserView.webContents.isDestroyed()) {
+        browserView.webContents.reload();
+      }
+    }, 1000);
+  });
+
+  browserView.webContents.on('unresponsive', () => {
+    console.log(`BrowserView ${tabId} became unresponsive`);
+    // Don't force close, just log
+  });
+
+  browserView.webContents.on('responsive', () => {
+    console.log(`BrowserView ${tabId} became responsive again`);
+  });
   
   // Set the bounds for the BrowserView
   const bounds = mainWindow.getBounds();
@@ -679,17 +981,25 @@ function createBrowserView(tabId = 0, url = '') {
     });
   }
   
-  // Handle navigation events
+  // Handle navigation events with error protection
   browserView.webContents.on('did-start-loading', () => {
-    mainWindow.webContents.send('browser-view-loading', { tabId, loading: true });
+    try {
+      mainWindow.webContents.send('browser-view-loading', { tabId, loading: true });
+    } catch (error) {
+      console.error('Error sending loading start event:', error);
+    }
   });
   
   browserView.webContents.on('did-stop-loading', () => {
-    mainWindow.webContents.send('browser-view-loading', { tabId, loading: false });
-    const currentUrl = browserView.webContents.getURL();
-    // Send empty string for about:blank to show blank in address bar
-    const displayUrl = currentUrl === 'about:blank' ? '' : currentUrl;
-    mainWindow.webContents.send('browser-view-url', { tabId, url: displayUrl });
+    try {
+      mainWindow.webContents.send('browser-view-loading', { tabId, loading: false });
+      const currentUrl = browserView.webContents.getURL();
+      // Send empty string for about:blank to show blank in address bar
+      const displayUrl = currentUrl === 'about:blank' ? '' : currentUrl;
+      mainWindow.webContents.send('browser-view-url', { tabId, url: displayUrl });
+    } catch (error) {
+      console.error('Error sending loading stop event:', error);
+    }
   });
   
   browserView.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
@@ -965,11 +1275,142 @@ function hideMainWindow() {
   }
 }
 
+// Global variables to track processes
+let autoHotkeyProcess = null;
+let autoHotkeyCheckInterval = null;
+
+// Function to check if AutoHotkey script is running
+function isAutoHotkeyRunning() {
+  return new Promise((resolve) => {
+    const { exec } = require('child_process');
+    exec('tasklist /FI "IMAGENAME eq type_word.exe" /FO CSV', (error, stdout) => {
+      if (error) {
+        resolve(false);
+        return;
+      }
+      // Check if type_word.exe is in the task list
+      const isRunning = stdout.toLowerCase().includes('type_word.exe');
+      resolve(isRunning);
+    });
+  });
+}
+
+
+// Function to start AutoHotkey script for Alt+L functionality
+async function startAutoHotkeyScript() {
+  try {
+    const path = require('path');
+    const fs = require('fs');
+    
+    let typeWordPath;
+    if (os.platform() === 'win32') {
+      // Look in the same directory as the main executable first
+      const appPath = process.execPath; // Path to the main executable
+      const appDir = path.dirname(appPath);
+      typeWordPath = path.join(appDir, 'type_word.exe');
+      
+      console.log('🔍 Looking for type_word at:', typeWordPath);
+      
+      // If not found in app directory, try resources directory (for packaged app)
+      if (!fs.existsSync(typeWordPath)) {
+        const resourcesPath = path.join(process.resourcesPath, 'type_word.exe');
+        if (fs.existsSync(resourcesPath)) {
+          typeWordPath = resourcesPath;
+          console.log('🔍 Found type_word in resources:', typeWordPath);
+        } else {
+          // Fallback to dist directory (for development)
+          typeWordPath = path.join(__dirname, '..', 'dist', 'type_word.exe');
+          console.log('🔍 Trying dist path:', typeWordPath);
+        }
+      }
+    } else {
+      // For non-Windows platforms, disable AutoHotkey
+      console.log('❌ AutoHotkey not supported on this platform');
+      return;
+    }
+    
+    // Check if type_word.exe exists
+    if (!fs.existsSync(typeWordPath)) {
+      console.log('❌ type_word.exe not found at:', typeWordPath);
+      console.log('Alt+L typing functionality will be disabled');
+      return;
+    }
+    
+    // Check if already running
+    const isRunning = await isAutoHotkeyRunning();
+    if (isRunning) {
+      console.log('AutoHotkey script is already running - Alt+L typing enabled');
+      return;
+    }
+    
+    // Start the AutoHotkey script
+    const { spawn } = require('child_process');
+    autoHotkeyProcess = spawn(typeWordPath, [], {
+      detached: true,
+      stdio: 'ignore'
+    });
+    
+    // Handle process events
+    autoHotkeyProcess.on('error', (error) => {
+      console.log('Error starting AutoHotkey script:', error);
+      autoHotkeyProcess = null;
+    });
+    
+    autoHotkeyProcess.on('exit', (code) => {
+      console.log('AutoHotkey script exited with code:', code);
+      autoHotkeyProcess = null;
+    });
+    
+    // Unref to allow main process to exit independently
+    autoHotkeyProcess.unref();
+    
+    console.log('AutoHotkey script started successfully - Alt+L typing enabled');
+    
+    // Start monitoring process
+    startAutoHotkeyMonitoring();
+    
+  } catch (err) {
+    console.log('Error starting AutoHotkey script:', err);
+  }
+}
+
+// Function to start monitoring AutoHotkey process
+function startAutoHotkeyMonitoring() {
+  // Clear existing interval if any
+  if (autoHotkeyCheckInterval) {
+    clearInterval(autoHotkeyCheckInterval);
+  }
+  
+  // Check every 5 seconds if AutoHotkey is still running
+  autoHotkeyCheckInterval = setInterval(async () => {
+    const isRunning = await isAutoHotkeyRunning();
+    if (!isRunning && autoHotkeyProcess === null) {
+      console.log('AutoHotkey script not running, attempting to restart...');
+      await startAutoHotkeyScript();
+    }
+  }, 5000);
+}
+
+
+// Function to stop AutoHotkey monitoring
+function stopAutoHotkeyMonitoring() {
+  if (autoHotkeyCheckInterval) {
+    clearInterval(autoHotkeyCheckInterval);
+    autoHotkeyCheckInterval = null;
+  }
+  
+  if (autoHotkeyProcess) {
+    autoHotkeyProcess.kill();
+    autoHotkeyProcess = null;
+  }
+}
+
+
 function registerGlobalShortcuts() {
   console.log('Registering global shortcuts...');
   
   // Ctrl+Shift + Right: Move window right
-  globalShortcut.register('CommandOrControl+Alt+Right', () => {
+  globalShortcut.register('Alt+Right', () => {
     if (mainWindow) {
       const [x, y] = mainWindow.getPosition();
       mainWindow.setPosition(x + 100, y);
@@ -977,65 +1418,16 @@ function registerGlobalShortcuts() {
   });
 
   // Ctrl+Shift + Left: Move window left
-  globalShortcut.register('CommandOrControl+Alt+Left', () => {
+  globalShortcut.register('Alt+Left', () => {
     if (mainWindow) {
       const [x, y] = mainWindow.getPosition();
       mainWindow.setPosition(x - 100, y);
     }
   });
 
-  // Ctrl+Alt + 1: Set window to small size (800x600)
-  globalShortcut.register('CommandOrControl+Alt+1', () => {
-    if (mainWindow) {
-      mainWindow.setSize(800, 600);
-      console.log('Window size set to: 800x600 (small)');
-    }
-  });
-
-  // Ctrl+Alt + 2: Set window to medium size (1200x800)
-  globalShortcut.register('CommandOrControl+Alt+2', () => {
-    if (mainWindow) {
-      mainWindow.setSize(1200, 800);
-      console.log('Window size set to: 1200x800 (medium)');
-    }
-  });
-
-  // Ctrl+Alt + 3: Set window to large size (1600x1000)
-  globalShortcut.register('CommandOrControl+Alt+3', () => {
-    if (mainWindow) {
-      mainWindow.setSize(1600, 1000);
-      console.log('Window size set to: 1600x1000 (large)');
-    }
-  });
-
-  // Ctrl+Alt + 4: Toggle fullscreen
-  globalShortcut.register('CommandOrControl+Alt+4', () => {
-    if (mainWindow) {
-      if (mainWindow.isFullScreen()) {
-        mainWindow.setFullScreen(false);
-        console.log('Window set to windowed mode');
-      } else {
-        mainWindow.setFullScreen(true);
-        console.log('Window set to fullscreen mode');
-      }
-    }
-  });
-
-  // Ctrl+Alt + 5: Toggle maximize
-  globalShortcut.register('CommandOrControl+Alt+5', () => {
-    if (mainWindow) {
-      if (mainWindow.isMaximized()) {
-        mainWindow.unmaximize();
-        console.log('Window unmaximized');
-      } else {
-        mainWindow.maximize();
-        console.log('Window maximized');
-      }
-    }
-  });
 
   // Ctrl+Alt + Up: Make window MORE OPAQUE (less transparent)
-  globalShortcut.register('CommandOrControl+Alt+Up', () => {
+  globalShortcut.register('Alt+Up', () => {
     console.log('MAKE MORE OPAQUE hotkey triggered!');
     console.log('Current opacity before change:', currentOpacity);
     if (mainWindow && currentOpacity < 1.0) {
@@ -1053,8 +1445,8 @@ function registerGlobalShortcuts() {
     }
   });
 
-  // Ctrl+Alt + Down: Make window MORE TRANSPARENT (less opaque)
-  globalShortcut.register('CommandOrControl+Alt+Down', () => {
+  // Ctrl+Shift + Down: Make window MORE TRANSPARENT (less opaque)
+  globalShortcut.register('Alt+Down', () => {
     console.log('MAKE MORE TRANSPARENT hotkey triggered!');
     console.log('Current opacity before change:', currentOpacity);
     if (mainWindow && currentOpacity > 0.4) {
@@ -1073,7 +1465,7 @@ function registerGlobalShortcuts() {
   });
 
   // Ctrl+Shift + .: Hide/Show window
-  globalShortcut.register('CommandOrControl+Alt+.', () => {
+  globalShortcut.register('Alt+X', () => {
     if (mainWindow) {
       if (isHidden || !mainWindow.isVisible()) {
         showMainWindow();
@@ -1100,31 +1492,63 @@ function registerGlobalShortcuts() {
   });
 
   // Ctrl+Shift+`: Screen capture mode
-  globalShortcut.register('CommandOrControl+Shift+`', () => {
+  globalShortcut.register('Alt+S', () => {
     if (mainWindow) {
       startScreenCapture();
     }
   });
 
-  // Test hotkey to check transparency status
-  globalShortcut.register('CommandOrControl+Alt+0', () => {
-    console.log('=== TRANSPARENCY STATUS TEST ===');
-    console.log('Current opacity variable:', currentOpacity);
-    if (mainWindow) {
-      console.log('Window opacity:', mainWindow.getOpacity());
-      console.log('Window is visible:', mainWindow.isVisible());
-      console.log('Window is focused:', mainWindow.isFocused());
-      console.log('Window bounds:', mainWindow.getBounds());
-      
-      // Force sync the opacity
-      console.log('Forcing opacity to match variable...');
-      mainWindow.setOpacity(currentOpacity);
-      console.log('Window opacity after sync:', mainWindow.getOpacity());
-    } else {
-      console.log('Main window is not available');
+  // Alt+PageUp: Scroll up in webview content
+  globalShortcut.register('Alt+PageUp', () => {
+    console.log('SCROLL UP hotkey triggered!');
+    if (mainWindow && browserViews.has(currentTabId)) {
+      const currentBrowserView = browserViews.get(currentTabId);
+      if (currentBrowserView && currentBrowserView.webContents && !currentBrowserView.webContents.isDestroyed()) {
+        currentBrowserView.webContents.executeJavaScript(`
+          window.scrollBy(0, -300);
+        `).catch(err => console.log('Scroll up failed:', err));
+      }
     }
-    console.log('===============================');
   });
+
+  // Alt+PageDown: Scroll down in webview content
+  globalShortcut.register('Alt+PageDown', () => {
+    console.log('SCROLL DOWN hotkey triggered!');
+    if (mainWindow && browserViews.has(currentTabId)) {
+      const currentBrowserView = browserViews.get(currentTabId);
+      if (currentBrowserView && currentBrowserView.webContents && !currentBrowserView.webContents.isDestroyed()) {
+        currentBrowserView.webContents.executeJavaScript(`
+          window.scrollBy(0, 300);
+        `).catch(err => console.log('Scroll down failed:', err));
+      }
+    }
+  });
+
+  // Start AutoHotkey script for Alt+L functionality and auto-restart
+  startAutoHotkeyScript();
+
+  // Google Authentication IPC handlers
+  ipcMain.handle('google-signin', handleGoogleSignIn);
+  ipcMain.handle('google-signout', handleGoogleSignOut);
+  ipcMain.handle('get-auth-status', () => {
+    return {
+      isSignedIn: isGoogleSignedIn,
+      userInfo: googleUserInfo
+    };
+  });
+
+  // Demo authentication IPC handlers (not needed with dialog approach)
+  // ipcMain.on('demo-auth-success', (event, userInfo) => {
+  //   console.log('Received demo-auth-success IPC:', userInfo);
+  //   handleDemoAuthSuccess(userInfo);
+  // });
+
+  // ipcMain.on('demo-auth-cancel', () => {
+  //   console.log('Received demo-auth-cancel IPC');
+  //   if (googleAuthWindow) {
+  //     googleAuthWindow.close();
+  //   }
+  // });
 
   // Verify all hotkeys are registered
   try {
@@ -1497,21 +1921,192 @@ async function takeScreenshot(captureData) {
   }
 }
 
+// Google Authentication
+let googleAuthWindow = null;
+let isGoogleSignedIn = false;
+let googleUserInfo = null;
+
+// Google OAuth configuration - Using a demo setup
+const GOOGLE_CLIENT_ID = 'demo-client-id.apps.googleusercontent.com';
+const GOOGLE_REDIRECT_URI = 'http://localhost:3000/auth/callback';
+
+// Function to handle Google Sign-In (Demo Version)
+async function handleGoogleSignIn() {
+  console.log('Google Sign-In requested');
+  try {
+    // For Windows compatibility, let's use a simpler approach
+    // Show a confirmation dialog instead of a separate window
+    
+    const result = await dialog.showMessageBox(mainWindow, {
+      type: 'question',
+      buttons: ['Sign In', 'Cancel'],
+      defaultId: 0,
+      title: 'Google Sign-In Demo',
+      message: 'Sign in to StealthBrowser',
+      detail: 'This is a demo authentication. Click "Sign In" to simulate Google sign-in.',
+      icon: null
+    });
+
+    if (result.response === 0) {
+      // User clicked "Sign In"
+      console.log('User confirmed sign-in');
+      const userInfo = {
+        id: 'demo123456',
+        email: 'demo@example.com',
+        name: 'Demo User',
+        picture: 'https://via.placeholder.com/150'
+      };
+      handleDemoAuthSuccess(userInfo);
+    } else {
+      console.log('User cancelled sign-in');
+    }
+
+  } catch (error) {
+    console.error('Error during Google Sign-In:', error);
+    mainWindow.webContents.send('auth-error', { message: 'Failed to start Google Sign-In' });
+  }
+}
+
+// Function to handle OAuth callback
+function handleAuthCallback(url) {
+  try {
+    const urlObj = new URL(url);
+    const code = urlObj.searchParams.get('code');
+    const error = urlObj.searchParams.get('error');
+
+    if (error) {
+      console.error('OAuth error:', error);
+      mainWindow.webContents.send('auth-error', { message: 'Authentication failed' });
+      return;
+    }
+
+    if (code) {
+      // Exchange code for token (simplified - in production, do this server-side)
+      exchangeCodeForToken(code);
+    }
+
+    // Close the auth window
+    if (googleAuthWindow) {
+      googleAuthWindow.close();
+    }
+
+  } catch (error) {
+    console.error('Error handling auth callback:', error);
+    mainWindow.webContents.send('auth-error', { message: 'Failed to process authentication' });
+  }
+}
+
+// Function to handle demo authentication success
+function handleDemoAuthSuccess(userInfo) {
+  console.log('Demo authentication success:', userInfo);
+  try {
+    // Store user info
+    googleUserInfo = userInfo;
+    isGoogleSignedIn = true;
+
+    // Save to secure storage
+    store.set('googleAuth', {
+      isSignedIn: true,
+      userInfo: userInfo,
+      timestamp: Date.now()
+    });
+
+    // Close the auth window
+    if (googleAuthWindow) {
+      googleAuthWindow.close();
+    }
+
+    // Notify renderer
+    console.log('Sending auth-success to renderer from demo:', userInfo);
+    mainWindow.webContents.send('auth-success', userInfo);
+
+  } catch (error) {
+    console.error('Error handling demo auth success:', error);
+    mainWindow.webContents.send('auth-error', { message: 'Failed to complete authentication' });
+  }
+}
+
+// Function to exchange authorization code for access token (Legacy - not used in demo)
+async function exchangeCodeForToken(code) {
+  try {
+    // In a real application, this should be done server-side
+    // For demo purposes, we'll simulate a successful authentication
+    const mockUserInfo = {
+      id: '123456789',
+      email: 'user@example.com',
+      name: 'John Doe',
+      picture: 'https://via.placeholder.com/150'
+    };
+
+    // Store user info
+    googleUserInfo = mockUserInfo;
+    isGoogleSignedIn = true;
+
+    // Save to secure storage
+    store.set('googleAuth', {
+      isSignedIn: true,
+      userInfo: mockUserInfo,
+      timestamp: Date.now()
+    });
+
+    // Notify renderer
+    console.log('Sending auth-success to renderer:', mockUserInfo);
+    mainWindow.webContents.send('auth-success', mockUserInfo);
+
+  } catch (error) {
+    console.error('Error exchanging code for token:', error);
+    mainWindow.webContents.send('auth-error', { message: 'Failed to complete authentication' });
+  }
+}
+
+// Function to handle Google Sign-Out
+function handleGoogleSignOut() {
+  try {
+    // Clear stored authentication
+    store.delete('googleAuth');
+    
+    // Reset state
+    isGoogleSignedIn = false;
+    googleUserInfo = null;
+
+    // Notify renderer
+    mainWindow.webContents.send('auth-signout');
+
+  } catch (error) {
+    console.error('Error during Google Sign-Out:', error);
+    mainWindow.webContents.send('auth-error', { message: 'Failed to sign out' });
+  }
+}
+
+// Function to check if user is already signed in
+function checkGoogleAuthStatus() {
+  try {
+    const authData = store.get('googleAuth');
+    if (authData && authData.isSignedIn) {
+      isGoogleSignedIn = true;
+      googleUserInfo = authData.userInfo;
+      mainWindow.webContents.send('auth-success', authData.userInfo);
+    }
+  } catch (error) {
+    console.error('Error checking auth status:', error);
+  }
+}
+
 // App event handlers
 app.whenReady().then(() => {
-  // Aggressive GPU disabling
-  app.commandLine.appendSwitch('disable-gpu');
-  app.commandLine.appendSwitch('disable-gpu-sandbox');
-  app.commandLine.appendSwitch('disable-gpu-compositing');
-  app.commandLine.appendSwitch('disable-3d-apis');
-  app.commandLine.appendSwitch('disable-webgl');
-  app.commandLine.appendSwitch('disable-webgl2');
-  app.commandLine.appendSwitch('disable-accelerated-2d-canvas');
-  app.commandLine.appendSwitch('disable-accelerated-jpeg-decoding');
-  app.commandLine.appendSwitch('disable-accelerated-video-decode');
-  app.commandLine.appendSwitch('disable-accelerated-video-encode');
-  app.commandLine.appendSwitch('force-gpu-rasterization', 'false');
-  app.commandLine.appendSwitch('enable-software-rasterizer');
+  // Performance optimizations for faster loading
+  app.commandLine.appendSwitch('enable-gpu-rasterization');
+  app.commandLine.appendSwitch('enable-zero-copy');
+  app.commandLine.appendSwitch('enable-gpu-memory-buffer-video-frames');
+  app.commandLine.appendSwitch('enable-accelerated-2d-canvas');
+  app.commandLine.appendSwitch('enable-accelerated-jpeg-decoding');
+  app.commandLine.appendSwitch('enable-accelerated-video-decode');
+  app.commandLine.appendSwitch('enable-accelerated-video-encode');
+  app.commandLine.appendSwitch('enable-gpu-compositing');
+  app.commandLine.appendSwitch('enable-3d-apis');
+  // Enable WebGL for modern websites
+  app.commandLine.appendSwitch('enable-webgl');
+  app.commandLine.appendSwitch('enable-webgl2');
   
   // Performance optimizations
   app.commandLine.appendSwitch('enable-webview');
@@ -1530,10 +2125,17 @@ app.whenReady().then(() => {
   app.commandLine.appendSwitch('disable-gpu-memory-buffer-video-frames');
   
   // Additional stealth switches to prevent screen capture and sharing
-  app.commandLine.appendSwitch('disable-features', 'VizDisplayCompositor');
-  app.commandLine.appendSwitch('disable-component-extensions-with-background-pages');
-  app.commandLine.appendSwitch('disable-default-apps');
-  app.commandLine.appendSwitch('disable-extensions');
+  // Additional performance optimizations
+  app.commandLine.appendSwitch('enable-features', 'VizDisplayCompositor');
+  app.commandLine.appendSwitch('enable-component-extensions-with-background-pages');
+  app.commandLine.appendSwitch('enable-default-apps');
+  app.commandLine.appendSwitch('enable-extensions');
+  // Faster loading optimizations
+  app.commandLine.appendSwitch('enable-dns-prefetch');
+  app.commandLine.appendSwitch('enable-tcp-fast-open');
+  app.commandLine.appendSwitch('enable-quic');
+  app.commandLine.appendSwitch('enable-http2');
+  app.commandLine.appendSwitch('enable-spdy-proxy-auth');
   app.commandLine.appendSwitch('disable-plugins');
   app.commandLine.appendSwitch('disable-plugins-discovery');
   app.commandLine.appendSwitch('disable-preconnect');
@@ -1547,25 +2149,28 @@ app.whenReady().then(() => {
   app.commandLine.appendSwitch('disable-hang-monitor');
   app.commandLine.appendSwitch('disable-prompt-on-repost');
   
-  // Aggressive screen capture prevention switches
+  // Selective screen capture prevention - allow some features for website compatibility
   app.commandLine.appendSwitch('disable-features', 'ScreenCapture');
   app.commandLine.appendSwitch('disable-features', 'DisplayCapture');
   app.commandLine.appendSwitch('disable-features', 'DesktopCapture');
   app.commandLine.appendSwitch('disable-features', 'GetDisplayMedia');
   app.commandLine.appendSwitch('disable-features', 'ScreenSharing');
-  app.commandLine.appendSwitch('disable-features', 'WebRTC');
-  app.commandLine.appendSwitch('disable-features', 'MediaStream');
+  // Allow WebRTC for modern websites
+  // app.commandLine.appendSwitch('disable-features', 'WebRTC');
+  // Allow MediaStream for website functionality
+  // app.commandLine.appendSwitch('disable-features', 'MediaStream');
   app.commandLine.appendSwitch('disable-features', 'CanvasCapture');
-  app.commandLine.appendSwitch('disable-features', 'VideoCapture');
-  app.commandLine.appendSwitch('disable-features', 'AudioCapture');
+  // Allow video/audio capture for websites
+  // app.commandLine.appendSwitch('disable-features', 'VideoCapture');
+  // app.commandLine.appendSwitch('disable-features', 'AudioCapture');
   app.commandLine.appendSwitch('disable-features', 'ScreenRecording');
   app.commandLine.appendSwitch('disable-features', 'ScreenMirroring');
-  app.commandLine.appendSwitch('disable-features', 'ScreenSharing');
   app.commandLine.appendSwitch('disable-features', 'RemoteDesktop');
   app.commandLine.appendSwitch('disable-features', 'ScreenCaptureAPI');
   app.commandLine.appendSwitch('disable-features', 'DisplayMediaAPI');
-  app.commandLine.appendSwitch('disable-features', 'GetUserMedia');
-  app.commandLine.appendSwitch('disable-features', 'MediaDevices');
+  // Allow getUserMedia and MediaDevices for website functionality
+  // app.commandLine.appendSwitch('disable-features', 'GetUserMedia');
+  // app.commandLine.appendSwitch('disable-features', 'MediaDevices');
   app.commandLine.appendSwitch('disable-features', 'ScreenCapturePermission');
   app.commandLine.appendSwitch('disable-features', 'DisplayCapturePermission');
   
@@ -1653,6 +2258,16 @@ app.whenReady().then(() => {
   
   createWindow(isStartupLaunch);
   registerGlobalShortcuts();
+
+  // Write main process PID immediately
+  const browserPidFile = path.join(os.homedir(), '.stealthbrowser', 'browser.pid');
+  writePidFile(browserPidFile, process.pid);
+  console.log('🆔 Main process PID written:', process.pid);
+
+  // Auto-restart functionality is now handled by type_word.ahk
+
+  // Check Google authentication status
+  checkGoogleAuthStatus();
 
   // No notification needed for startup
 
@@ -1868,7 +2483,18 @@ ipcMain.handle('set-stealth-mode', async (event, enabled) => {
 // BrowserView navigation handlers
 ipcMain.handle('browser-view-navigate', (event, { tabId, url }) => {
   const browserView = browserViews.get(tabId);
-  if (browserView) {
+  if (!browserView) {
+    console.error('BrowserView not found for tab:', tabId);
+    return false;
+  }
+
+  // Check if BrowserView is in a valid state
+  if (browserView.webContents.isDestroyed()) {
+    console.error('BrowserView is destroyed for tab:', tabId);
+    return false;
+  }
+
+  try {
     // If URL is empty, load blank page
     if (url === '') {
       browserView.webContents.loadURL('about:blank').then(() => {
@@ -1879,11 +2505,21 @@ ipcMain.handle('browser-view-navigate', (event, { tabId, url }) => {
         console.error('Failed to load blank page:', err);
       });
     } else {
-      // Handle regular URLs
-      browserView.webContents.loadURL(url).catch(err => {
-        browserView.webContents.loadURL('data:text/html,<h1>Failed to load page</h1><p>Please check your internet connection.</p>');
+      // Handle regular URLs with better error handling
+      browserView.webContents.loadURL(url).then(() => {
+        console.log('Successfully navigated to:', url, 'in tab:', tabId);
+      }).catch(err => {
+        console.error('Failed to load URL:', url, 'in tab:', tabId, err);
+        // Try fallback
+        browserView.webContents.loadURL('data:text/html,<h1>Failed to load page</h1><p>Please check your internet connection.</p>').catch(fallbackErr => {
+          console.error('Fallback also failed:', fallbackErr);
+        });
       });
     }
+    return true;
+  } catch (error) {
+    console.error('Navigation error for tab:', tabId, error);
+    return false;
   }
 });
 
@@ -1920,18 +2556,23 @@ ipcMain.handle('browser-view-can-go-forward', (event, tabId) => {
 
 // Tab management handlers
 ipcMain.handle('create-tab', (event, url = '') => {
-  console.log('Creating new tab with URL:', url);
-  const newTabId = ++tabCounter;
-  console.log('New tab ID:', newTabId);
-  
-  // Handle special cookie management URL
-  let finalUrl = url;
-  if (url === 'cookie-management') {
-    finalUrl = `file://${path.join(__dirname, 'cookie-management.html').replace(/\\/g, '/')}`;
+  try {
+    console.log('Creating new tab with URL:', url);
+    const newTabId = ++tabCounter;
+    console.log('New tab ID:', newTabId);
+    
+    // Handle special cookie management URL
+    let finalUrl = url;
+    if (url === 'cookie-management') {
+      finalUrl = `file://${path.join(__dirname, 'cookie-management.html').replace(/\\/g, '/')}`;
+    }
+    
+    createBrowserView(newTabId, finalUrl);
+    return newTabId;
+  } catch (error) {
+    console.error('Error creating tab:', error);
+    return null;
   }
-  
-  createBrowserView(newTabId, finalUrl);
-  return newTabId;
 });
 
 ipcMain.handle('switch-tab', (event, tabId) => {
@@ -1975,6 +2616,9 @@ ipcMain.handle('close-tab', (event, tabId) => {
       tabUsageHistory.splice(historyIndex, 1);
     }
     
+    // Save tabs when one is closed
+    saveTabs();
+    
     // Switch to another tab if we closed the current one
     if (tabId === currentTabId) {
       const remainingTabs = Array.from(browserViews.keys());
@@ -2002,6 +2646,60 @@ ipcMain.handle('get-current-tab-url', (event, tabId) => {
     return currentUrl === 'about:blank' ? '' : currentUrl;
   }
   return null;
+});
+
+// Find existing tab with specific URL or domain
+ipcMain.handle('find-tab-with-url', (event, targetUrl) => {
+  try {
+    console.log('Finding tab with URL:', targetUrl);
+    
+    for (const [tabId, browserView] of browserViews) {
+      if (browserView && browserView.webContents && !browserView.webContents.isDestroyed()) {
+        try {
+          const currentUrl = browserView.webContents.getURL();
+          
+          // Check if URLs match exactly (handle about:blank case)
+          if ((currentUrl === 'about:blank' && targetUrl === '') || 
+              (currentUrl !== 'about:blank' && currentUrl === targetUrl)) {
+            console.log('Found exact URL match:', currentUrl);
+            return tabId;
+          }
+          
+          // Check if domains match for quick link services
+          if (currentUrl !== 'about:blank' && targetUrl !== '') {
+            try {
+              const currentDomain = new URL(currentUrl).hostname;
+              const targetDomain = new URL(targetUrl).hostname;
+              
+              // Define domain groups for quick links
+              const domainGroups = {
+                'chatgpt': ['chat.openai.com', 'chatgpt.com'],
+                'deepseek': ['chat.deepseek.com', 'deepseek.com']
+              };
+              
+              // Check if both URLs belong to the same service domain group
+              for (const [service, domains] of Object.entries(domainGroups)) {
+                if (domains.includes(currentDomain) && domains.includes(targetDomain)) {
+                  console.log(`Found existing tab for ${service} service:`, currentUrl);
+                  return tabId;
+                }
+              }
+            } catch (error) {
+              console.log('Error parsing URLs for domain comparison:', error);
+              // Continue with normal flow if URL parsing fails
+            }
+          }
+        } catch (error) {
+          console.log('Error getting URL from browserView:', error);
+          // Continue to next browserView
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Error in find-tab-with-url:', error);
+  }
+  
+  return null; // No existing tab found
 });
 
 // Window control handlers
