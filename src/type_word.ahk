@@ -125,17 +125,26 @@ restartStealthBrowser() {
     clipboardText := RegExReplace(clipboardText, "^\s+", "")    ; Remove leading whitespace
     clipboardText := RegExReplace(clipboardText, "\s+$", "")    ; Remove trailing whitespace
     
-    ; Type like a programmer - stop at logical points with longer delays between words
+    ; Type like a programmer - handle auto-completion and logical code breaks
     if (RegExMatch(clipboardText, "^(\S+)(\s+)(.*)$", &match)) {
         ; Word followed by whitespace - type word + separator (preserve original whitespace)
         textToType := match[1] . match[2]  ; word + separator
         remainingText := match[3]          ; rest of text
+    } else if (RegExMatch(clipboardText, "^([^{}]*)(\{)([^}]*)(\})(.*)$", &match)) {
+        ; Handle braces with content: text{content}rest
+        ; Type up to opening brace, let IDE auto-complete, then continue with content
+        textToType := match[1] . match[2]  ; text + opening brace
+        remainingText := match[3] . match[4] . match[5]  ; content + closing brace + rest
+    } else if (RegExMatch(clipboardText, "^([^{}]*)(\{)(.*)$", &match)) {
+        ; Stop at opening brace - let IDE auto-complete the closing brace
+        textToType := match[1] . match[2]  ; text + opening brace
+        remainingText := match[3]          ; rest of text
     } else if (RegExMatch(clipboardText, "^([^,;(){}]+)([,;(){}])(.*)$", &match)) {
-        ; Stop before punctuation - type up to punctuation
+        ; Stop before other punctuation - type up to punctuation
         textToType := match[1] . match[2]  ; text + punctuation
         remainingText := match[3]          ; rest of text
-    } else if (RegExMatch(clipboardText, "^(.{1,8})(.*)$", &match)) {
-        ; No natural break found - type up to 8 characters (shorter chunks for longer delays)
+    } else if (RegExMatch(clipboardText, "^(.{1,12})(.*)$", &match)) {
+        ; No natural break found - type up to 12 characters (longer chunks for human-like typing)
         textToType := match[1]
         remainingText := match[2]
     } else {
@@ -151,6 +160,9 @@ restartStealthBrowser() {
     isPaused := false
     lastClipboard := clipboardText  ; Remember the original clipboard content
     
+    ; Register ESC hotkey only when typing starts
+    Hotkey("Esc", pauseTyping, "On")
+    
     ; Update clipboard with remaining text
     A_Clipboard := remainingText
     
@@ -158,12 +170,11 @@ restartStealthBrowser() {
     continueTyping()
 }
 
-; Global hotkey: Esc (pause typing)
-Esc:: {
-    ; Declare global variables
-    global isTyping, isPaused, currentText, currentIndex, lastClipboard
+; Function to pause typing (called by ESC hotkey)
+pauseTyping() {
+    global isTyping, isPaused
     
-    ; If currently typing and not paused, pause it
+    ; Only pause if currently typing and not already paused
     if (isTyping && !isPaused) {
         isPaused := true
         SetTimer(continueTyping, 0)   ; Stop timer immediately
@@ -233,8 +244,11 @@ continueTyping() {
         currentText := ""
         currentIndex := 1
         
+        ; Unregister ESC hotkey when typing finishes
+        Hotkey("Esc", pauseTyping, "Off")
+        
         ; Add longer delay between words (like thinking between words)
-        Sleep(Random(300, 600))
+        Sleep(Random(800, 1500))  ; Longer pause between word chunks
         return
     }
     
@@ -253,10 +267,42 @@ continueTyping() {
     
     ; Schedule next character only if not paused
     if (!isPaused && isTyping) {
+        ; Human-like typing delays optimized for coding
         if (char = "`n") {
-            delay := Random(1000, 2000)  ; 0.5-1.5 seconds after newline
+            ; Moderate pause after newlines (thinking about next line of code)
+            delay := Random(800, 1500)   ; 0.8-1.5 seconds after newline
+        } else if (char = "{" || char = "}") {
+            ; Brief pause after braces (letting IDE auto-complete)
+            delay := Random(200, 400)    ; 0.2-0.4 seconds after braces
+        } else if (char = "(" || char = ")") {
+            ; Brief pause after parentheses
+            delay := Random(150, 300)    ; 0.15-0.3 seconds after parentheses
+        } else if (char = ";" || char = ":") {
+            ; Medium pause after code statements
+            delay := Random(300, 500)    ; 0.3-0.5 seconds after statements
+        } else if (char = ",") {
+            ; Quick pause after parameters
+            delay := Random(100, 200)    ; 0.1-0.2 seconds after parameters
+        } else if (char = " ") {
+            ; Variable pause between words (natural word spacing)
+            delay := Random(120, 300)    ; 0.12-0.3 seconds between words
+        } else if (RegExMatch(char, "[A-Z]")) {
+            ; Slightly longer pause for capital letters (class names, functions)
+            delay := Random(150, 280)    ; 0.15-0.28 seconds for capitals
+        } else if (RegExMatch(char, "[0-9]")) {
+            ; Medium pause for numbers (thinking about values)
+            delay := Random(180, 350)    ; 0.18-0.35 seconds for numbers
+        } else if (RegExMatch(char, "[{}()\\[\\]]")) {
+            ; Quick typing for brackets and parentheses
+            delay := Random(80, 150)     ; 0.08-0.15 seconds for brackets
         } else {
-            delay := Random(50, 150)    ; Normal typing speed
+            ; Normal character typing speed for code
+            delay := Random(60, 150)     ; 0.06-0.15 seconds for regular chars
+        }
+        
+        ; Add occasional longer pauses to simulate thinking (5% chance)
+        if (Random(1, 100) <= 5) {
+            delay += Random(500, 1200)   ; Extra 0.5-1.2 seconds thinking pause
         }
         
         ; Use timer to schedule next character (non-blocking)
