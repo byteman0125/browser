@@ -23,8 +23,25 @@ async function backupCookies() {
   try {
     const persistentSession = session.fromPartition('persist:stealthbrowser');
     const cookies = await persistentSession.cookies.get({});
-    fs.writeFileSync(cookiesBackupPath, JSON.stringify(cookies, null, 2));
-    console.log(`Backed up ${cookies.length} cookies to ${cookiesBackupPath}`);
+    
+    // Also backup cookies from all BrowserViews
+    const allCookies = [...cookies];
+    for (const [tabId, browserView] of browserViews) {
+      try {
+        const viewCookies = await browserView.webContents.session.cookies.get({});
+        // Add cookies that aren't already in the list
+        for (const cookie of viewCookies) {
+          if (!allCookies.find(c => c.name === cookie.name && c.domain === cookie.domain)) {
+            allCookies.push(cookie);
+          }
+        }
+      } catch (error) {
+        console.error('Error backing up cookies from BrowserView:', tabId, error);
+      }
+    }
+    
+    fs.writeFileSync(cookiesBackupPath, JSON.stringify(allCookies, null, 2));
+    console.log(`🍪 Backed up ${allCookies.length} cookies to ${cookiesBackupPath}`);
   } catch (error) {
     console.error('Error backing up cookies:', error);
   }
@@ -38,14 +55,56 @@ async function restoreCookies() {
       const cookies = JSON.parse(cookiesData);
       const persistentSession = session.fromPartition('persist:stealthbrowser');
       
+      console.log(`🔄 Restoring ${cookies.length} cookies from backup...`);
+      
       for (const cookie of cookies) {
         try {
-          await persistentSession.cookies.set(cookie);
+          // Ensure cookie has proper format
+          const cookieData = {
+            url: cookie.url || `https://${cookie.domain}`,
+            name: cookie.name,
+            value: cookie.value,
+            domain: cookie.domain,
+            path: cookie.path || '/',
+            secure: cookie.secure || false,
+            httpOnly: cookie.httpOnly || false,
+            expirationDate: cookie.expirationDate
+          };
+          
+          await persistentSession.cookies.set(cookieData);
         } catch (error) {
           console.error('Error restoring cookie:', cookie.name, error);
         }
       }
-      console.log(`Restored ${cookies.length} cookies from backup`);
+      console.log(`✅ Restored ${cookies.length} cookies from backup`);
+      
+      // Also restore cookies to all existing BrowserViews
+      for (const [tabId, browserView] of browserViews) {
+        try {
+          const viewSession = browserView.webContents.session;
+          for (const cookie of cookies) {
+            try {
+              const cookieData = {
+                url: cookie.url || `https://${cookie.domain}`,
+                name: cookie.name,
+                value: cookie.value,
+                domain: cookie.domain,
+                path: cookie.path || '/',
+                secure: cookie.secure || false,
+                httpOnly: cookie.httpOnly || false,
+                expirationDate: cookie.expirationDate
+              };
+              await viewSession.cookies.set(cookieData);
+            } catch (error) {
+              // Ignore individual cookie errors
+            }
+          }
+        } catch (error) {
+          console.error('Error restoring cookies to BrowserView:', tabId, error);
+        }
+      }
+    } else {
+      console.log('📂 No cookie backup file found, starting fresh');
     }
   } catch (error) {
     console.error('Error restoring cookies:', error);
@@ -834,6 +893,14 @@ function createWindow(startHidden = false) {
     restorePreviousTabs();
   }, 1000);
   
+  // Restore cookies to all BrowserViews after window is fully ready
+  setTimeout(() => {
+    console.log('🔄 Performing delayed cookie restoration...');
+    for (const [tabId, browserView] of browserViews) {
+      restoreCookiesToBrowserView(browserView);
+    }
+  }, 2000);
+  
   // Create system tray
   createSystemTray();
   
@@ -1037,6 +1104,38 @@ function setupWebviewPermissions() {
   });
 }
 
+// Function to restore cookies to a specific BrowserView
+async function restoreCookiesToBrowserView(browserView) {
+  try {
+    if (fs.existsSync(cookiesBackupPath)) {
+      const cookiesData = fs.readFileSync(cookiesBackupPath, 'utf8');
+      const cookies = JSON.parse(cookiesData);
+      const viewSession = browserView.webContents.session;
+      
+      for (const cookie of cookies) {
+        try {
+          const cookieData = {
+            url: cookie.url || `https://${cookie.domain}`,
+            name: cookie.name,
+            value: cookie.value,
+            domain: cookie.domain,
+            path: cookie.path || '/',
+            secure: cookie.secure || false,
+            httpOnly: cookie.httpOnly || false,
+            expirationDate: cookie.expirationDate
+          };
+          await viewSession.cookies.set(cookieData);
+        } catch (error) {
+          // Ignore individual cookie errors
+        }
+      }
+      console.log(`🍪 Restored ${cookies.length} cookies to new BrowserView`);
+    }
+  } catch (error) {
+    console.error('Error restoring cookies to BrowserView:', error);
+  }
+}
+
 function createBrowserView(tabId = 0, url = '') {
   const browserView = new BrowserView({
     webPreferences: {
@@ -1228,6 +1327,11 @@ function createBrowserView(tabId = 0, url = '') {
           addToUrlHistory(currentUrl, title);
         }
       }
+      
+      // Restore cookies to this BrowserView after it finishes loading
+      setTimeout(() => {
+        restoreCookiesToBrowserView(browserView);
+      }, 500);
     } catch (error) {
       console.error('Error sending loading stop event:', error);
     }

@@ -24,9 +24,7 @@ try {
     ; Ignore errors
 }
 
-; Show startup notification
-ToolTip("AutoHotkey Script Loaded - Alt+L: Type, Alt+C: Copy, ESC: Pause", 0, 0)
-SetTimer(() => ToolTip(), -3000)  ; Hide after 3 seconds
+; Startup notification removed
 
 
 ; Keep script running - prevent auto-exit
@@ -59,8 +57,7 @@ isStealthBrowserRunning() {
                     }
                 }
             }
-            ToolTip("Multiple StealthBrowser instances detected - extra ones killed", 0, 0)
-            SetTimer(() => ToolTip(), -3000)
+            ; Multiple instances notification removed
         }
         
         return (processes.Length > 0)
@@ -100,8 +97,7 @@ restartStealthBrowser() {
             if (FileExist(path)) {
                 try {
                     Run(path, , "Hide")
-                    ToolTip("StealthBrowser started", 0, 0)
-                    SetTimer(() => ToolTip(), -3000)
+                    ; StealthBrowser started notification removed
                     return
                 } catch {
                     continue  ; Try next path if this one fails
@@ -109,13 +105,10 @@ restartStealthBrowser() {
             }
         }
         
-        ; Only show error if no paths worked
-        ToolTip("StealthBrowser not found in any location", 0, 0)
-        SetTimer(() => ToolTip(), -5000)
+        ; Error notification removed
         
     } catch {
-        ToolTip("Error in restartStealthBrowser function", 0, 0)
-        SetTimer(() => ToolTip(), -3000)
+        ; Error notification removed
     }
 }
 
@@ -125,8 +118,7 @@ restartStealthBrowser() {
     
     ; Check if StealthBrowser is running
     if (!isStealthBrowserRunning()) {
-        ToolTip("StealthBrowser not running", 0, 0)
-        SetTimer(() => ToolTip(), -2000)
+        ; StealthBrowser not running notification removed
         return
     }
     
@@ -146,8 +138,7 @@ restartStealthBrowser() {
     clipboardText := A_Clipboard
     
     if (clipboardText = "") {
-        ToolTip("Clipboard is empty", 0, 0)
-        SetTimer(() => ToolTip(), -2000)
+        ; Clipboard empty notification removed
         return
     }
     
@@ -178,16 +169,14 @@ pauseTyping() {
     if (isTyping && !isPaused) {
         isPaused := true
         SetTimer(continueTyping, 0)
-        ToolTip("Typing paused - Press Alt+L to resume", 0, 0)
-        SetTimer(() => ToolTip(), -2000)
+        ; Typing paused notification removed
     }
 }
 
 ; Copy hotkey: Alt+C
 !c:: {
     if (!isStealthBrowserRunning()) {
-        ToolTip("StealthBrowser not running", 0, 0)
-        SetTimer(() => ToolTip(), -2000)
+        ; StealthBrowser not running notification removed
         return
     }
     
@@ -196,8 +185,7 @@ pauseTyping() {
     Send("^c")
     Sleep(50)
     Click("Left")
-    ToolTip("Content copied", 0, 0)
-    SetTimer(() => ToolTip(), -1000)
+    ; Content copied notification removed
 }
 
 ; Continue typing function
@@ -218,8 +206,7 @@ continueTyping() {
         currentIndex := 1
         
         Hotkey("Esc", pauseTyping, "Off")
-        ToolTip("Typing completed", 0, 0)
-        SetTimer(() => ToolTip(), -2000)
+        ; Typing completed notification removed
         return
     }
     
