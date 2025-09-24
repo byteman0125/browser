@@ -4,308 +4,251 @@
 SendMode("Input")
 SetWorkingDir(A_ScriptDir)
 
-; Global variables for pause/resume functionality
+; Ensure only one instance of this script is running
+if (A_IsCompiled) {
+    ; If compiled, use process name
+    ProcessName := "type_word.exe"
+} else {
+    ; If not compiled, use script name
+    ProcessName := "AutoHotkey.exe"
+}
+
+; Kill any other instances of this script
+try {
+    for process in ComObjGet("winmgmts:").ExecQuery("Select * from Win32_Process Where Name = '" . ProcessName . "'") {
+        if (process.ProcessId != DllCall("GetCurrentProcessId")) {
+            Run("taskkill /F /PID " . process.ProcessId, , "Hide")
+        }
+    }
+} catch {
+    ; Ignore errors
+}
+
+; Show startup notification
+ToolTip("AutoHotkey Script Loaded - Alt+L: Type, Alt+C: Copy, ESC: Pause", 0, 0)
+SetTimer(() => ToolTip(), -3000)  ; Hide after 3 seconds
+
+
+; Keep script running - prevent auto-exit
+Persistent
+
+; Global variables
 isTyping := false
 isPaused := false
 currentText := ""
 currentIndex := 1
-lastClipboard := ""
 
-; Function to check if StealthBrowser is running
+; Function to check if StealthBrowser is running and ensure only one instance
 isStealthBrowserRunning() {
     try {
-        ; Use WMI to check for StealthBrowser process
+        processes := []
+        ; Get all StealthBrowser processes
         for process in ComObjGet("winmgmts:").ExecQuery("Select * from Win32_Process Where Name = 'StealthBrowser.exe'") {
-            return true
+            processes.Push(process.ProcessId)
         }
-        return false
+        
+        ; If more than one instance, kill extra ones
+        if (processes.Length > 1) {
+            ; Keep the first one, kill the rest
+            for i in processes {
+                if (i > 1) {  ; Skip first process (index 1)
+                    try {
+                        Run("taskkill /F /PID " . processes[i], , "Hide")
+                    } catch {
+                        ; Ignore kill errors
+                    }
+                }
+            }
+            ToolTip("Multiple StealthBrowser instances detected - extra ones killed", 0, 0)
+            SetTimer(() => ToolTip(), -3000)
+        }
+        
+        return (processes.Length > 0)
     } catch {
-        ; Fallback method using tasklist
-        try {
-            result := RunWait("tasklist /FI `"IMAGENAME eq StealthBrowser.exe`" /FO CSV", , "Hide")
-            return (result = 0)
-        } catch {
-            return false
-        }
+        return false
     }
 }
 
-; Auto-restart functionality - monitor and restart StealthBrowser
-monitorInterval := 10000  ; Check every 10 seconds
-lastBrowserCheck := 0
-
-; Start browser monitoring
+; Auto-restart functionality - start monitoring after a delay
+monitorInterval := 10000
 SetTimer(browserMonitor, monitorInterval)
 
-; Browser monitoring function to restart StealthBrowser if it crashes
 browserMonitor() {
-    global lastBrowserCheck
-    
-    ; Check if StealthBrowser is running
-    if (!isStealthBrowserRunning()) {
-        ; Browser not running, try to restart it
-        restartStealthBrowser()
+    try {
+        if (!isStealthBrowserRunning()) {
+            restartStealthBrowser()
+        }
+    } catch {
+        ; Ignore errors in browser monitoring to prevent script exit
     }
-    
-    lastBrowserCheck := A_TickCount
 }
 
-; Function to restart StealthBrowser
 restartStealthBrowser() {
     try {
-        ; Look for StealthBrowser executable in common locations
+        ; Check if StealthBrowser is already running
+        if (isStealthBrowserRunning()) {
+            return  ; Already running, don't start another instance
+        }
+        
         browserPaths := [
-            A_ScriptDir . "\..\dist\win-unpacked\StealthBrowser.exe",
+            A_ScriptDir . "\..\dist\StealthBrowser.exe",
             A_ScriptDir . "\..\StealthBrowser.exe",
             "StealthBrowser.exe"
         ]
         
         for path in browserPaths {
             if (FileExist(path)) {
-                ; Start StealthBrowser
-                Run(path, , "Hide")
-                ToolTip("StealthBrowser restarted", 0, 0)
-                SetTimer(() => ToolTip(), -3000)  ; Hide after 3 seconds
-                return
+                try {
+                    Run(path, , "Hide")
+                    ToolTip("StealthBrowser started", 0, 0)
+                    SetTimer(() => ToolTip(), -3000)
+                    return
+                } catch {
+                    continue  ; Try next path if this one fails
+                }
             }
         }
         
-        ; If not found, show error
-        ToolTip("StealthBrowser not found - cannot restart", 0, 0)
-        SetTimer(() => ToolTip(), -5000)  ; Hide after 5 seconds
+        ; Only show error if no paths worked
+        ToolTip("StealthBrowser not found in any location", 0, 0)
+        SetTimer(() => ToolTip(), -5000)
         
     } catch {
-        ToolTip("Error restarting StealthBrowser", 0, 0)
-        SetTimer(() => ToolTip(), -3000)  ; Hide after 3 seconds
+        ToolTip("Error in restartStealthBrowser function", 0, 0)
+        SetTimer(() => ToolTip(), -3000)
     }
 }
 
-; Global hotkey: Alt+L (safe for Chrome browser)
+; Main typing hotkey: Alt+L
 !l:: {
-    ; Declare global variables
-    global isTyping, isPaused, currentText, currentIndex, lastClipboard
+    global isTyping, isPaused, currentText, currentIndex
     
     ; Check if StealthBrowser is running
     if (!isStealthBrowserRunning()) {
-        ; StealthBrowser not running, show brief notification
         ToolTip("StealthBrowser not running", 0, 0)
-        SetTimer(() => ToolTip(), -2000)  ; Hide after 2 seconds
+        SetTimer(() => ToolTip(), -2000)
         return
     }
     
     ; If currently typing, toggle pause/resume
     if (isTyping) {
         if (isPaused) {
-            ; Resume typing
             isPaused := false
-            SetTimer(continueTyping, 1)  ; Resume immediately
+            SetTimer(continueTyping, 1)
         } else {
-            ; Pause typing immediately
             isPaused := true
-            SetTimer(continueTyping, 0)   ; Stop timer immediately
+            SetTimer(continueTyping, 0)
         }
         return
     }
     
-    ; No delay needed - hotkey should respond immediately
-    
     ; Get clipboard content
     clipboardText := A_Clipboard
     
-    ; Check if clipboard is empty
     if (clipboardText = "") {
+        ToolTip("Clipboard is empty", 0, 0)
+        SetTimer(() => ToolTip(), -2000)
         return
     }
     
-    ; Clean the clipboard content - remove extra newlines and normalize whitespace
-    clipboardText := RegExReplace(clipboardText, "\r\n", "`n")  ; Convert Windows line endings
-    clipboardText := RegExReplace(clipboardText, "\r", "`n")    ; Convert Mac line endings
-    clipboardText := RegExReplace(clipboardText, "`n{3,}", "`n`n")  ; Max 2 consecutive newlines
-    clipboardText := RegExReplace(clipboardText, "`n\s+`n", "`n`n")  ; Remove spaces between newlines
-    clipboardText := RegExReplace(clipboardText, "^\s+", "")    ; Remove leading whitespace
-    clipboardText := RegExReplace(clipboardText, "\s+$", "")    ; Remove trailing whitespace
-    
-    ; Type like a programmer - handle auto-completion and logical code breaks
-    if (RegExMatch(clipboardText, "^(\S+)(\s+)(.*)$", &match)) {
-        ; Word followed by whitespace - type word + separator (preserve original whitespace)
-        textToType := match[1] . match[2]  ; word + separator
-        remainingText := match[3]          ; rest of text
-    } else if (RegExMatch(clipboardText, "^([^{}]*)(\{)([^}]*)(\})(.*)$", &match)) {
-        ; Handle braces with content: text{content}rest
-        ; Type up to opening brace, let IDE auto-complete, then continue with content
-        textToType := match[1] . match[2]  ; text + opening brace
-        remainingText := match[3] . match[4] . match[5]  ; content + closing brace + rest
-    } else if (RegExMatch(clipboardText, "^([^{}]*)(\{)(.*)$", &match)) {
-        ; Stop at opening brace - let IDE auto-complete the closing brace
-        textToType := match[1] . match[2]  ; text + opening brace
-        remainingText := match[3]          ; rest of text
-    } else if (RegExMatch(clipboardText, "^([^,;(){}]+)([,;(){}])(.*)$", &match)) {
-        ; Stop before other punctuation - type up to punctuation
-        textToType := match[1] . match[2]  ; text + punctuation
-        remainingText := match[3]          ; rest of text
-    } else if (RegExMatch(clipboardText, "^(.{1,12})(.*)$", &match)) {
-        ; No natural break found - type up to 12 characters (longer chunks for human-like typing)
-        textToType := match[1]
-        remainingText := match[2]
-    } else {
-        ; Fallback - type entire text
-        textToType := clipboardText
-        remainingText := ""
-    }
+    ; Clean clipboard content
+    clipboardText := RegExReplace(clipboardText, "\r\n", "`n")
+    clipboardText := RegExReplace(clipboardText, "\r", "`n")
+    clipboardText := RegExReplace(clipboardText, "`n{3,}", "`n`n")
+    clipboardText := RegExReplace(clipboardText, "^\s+", "")
+    clipboardText := RegExReplace(clipboardText, "\s+$", "")
     
     ; Start typing
-    currentText := textToType
+    currentText := clipboardText
     currentIndex := 1
     isTyping := true
     isPaused := false
-    lastClipboard := clipboardText  ; Remember the original clipboard content
     
-    ; Register ESC hotkey only when typing starts
+    ; Register ESC hotkey
     Hotkey("Esc", pauseTyping, "On")
-    
-    ; Update clipboard with remaining text
-    A_Clipboard := remainingText
     
     ; Start typing process
     continueTyping()
 }
 
-; Function to pause typing (called by ESC hotkey)
+; Pause function
 pauseTyping() {
     global isTyping, isPaused
     
-    ; Only pause if currently typing and not already paused
     if (isTyping && !isPaused) {
         isPaused := true
-        SetTimer(continueTyping, 0)   ; Stop timer immediately
+        SetTimer(continueTyping, 0)
+        ToolTip("Typing paused - Press Alt+L to resume", 0, 0)
+        SetTimer(() => ToolTip(), -2000)
     }
 }
 
-; Global hotkey: Alt+C (stealth copy with mouse click)
+; Copy hotkey: Alt+C
 !c:: {
-    ; Check if StealthBrowser is running
     if (!isStealthBrowserRunning()) {
-        ; StealthBrowser not running, show brief notification
         ToolTip("StealthBrowser not running", 0, 0)
-        SetTimer(() => ToolTip(), -2000)  ; Hide after 2 seconds
+        SetTimer(() => ToolTip(), -2000)
         return
     }
     
-    ; Select all content
-    Send("^a")  ; Ctrl+A to select all
-    
-    ; Copy the selected content
-    Send("^c")  ; Ctrl+C to copy
-    
-    ; Small delay to ensure everything is processed
-    Sleep(10)
-    
-    ; Mouse click to make it look like normal interaction
-    Click("Left")  ; Left click to make it look like normal mouse activity
+    Send("^a")
+    Sleep(50)
+    Send("^c")
+    Sleep(50)
+    Click("Left")
+    ToolTip("Content copied", 0, 0)
+    SetTimer(() => ToolTip(), -1000)
 }
 
-; Function to continue typing
+; Continue typing function
 continueTyping() {
-    ; Declare global variables
-    global isTyping, isPaused, currentText, currentIndex, lastClipboard
+    global isTyping, isPaused, currentText, currentIndex
     
-    ; Stop timer first
     SetTimer(continueTyping, 0)
     
-    ; Check pause state immediately
     if (isPaused || !isTyping) {
         return
     }
     
-    ; Check if clipboard has changed
-    currentClipboard := A_Clipboard
-    if (currentClipboard != lastClipboard && currentClipboard != "") {
-        ; Clipboard changed, switch to new content
-        lastClipboard := currentClipboard
-        
-        ; Clean the new clipboard content
-        clipboardText := RegExReplace(currentClipboard, "\r\n", "`n")
-        clipboardText := RegExReplace(clipboardText, "\r", "`n")
-        clipboardText := RegExReplace(clipboardText, "`n{3,}", "`n`n")
-        clipboardText := RegExReplace(clipboardText, "`n\s+`n", "`n`n")
-        clipboardText := RegExReplace(clipboardText, "^\s+", "")
-        clipboardText := RegExReplace(clipboardText, "\s+$", "")
-        
-        ; Reset typing with new content
-        currentText := clipboardText
-        currentIndex := 1
-        isPaused := false
-    }
-    
     if (currentIndex > StrLen(currentText)) {
-        ; Finished typing, reset state and add longer delay between words
+        ; Finished typing
         isTyping := false
         isPaused := false
         currentText := ""
         currentIndex := 1
         
-        ; Unregister ESC hotkey when typing finishes
         Hotkey("Esc", pauseTyping, "Off")
-        
-        ; Add longer delay between words (like thinking between words)
-        Sleep(Random(800, 1500))  ; Longer pause between word chunks
+        ToolTip("Typing completed", 0, 0)
+        SetTimer(() => ToolTip(), -2000)
         return
     }
     
     char := SubStr(currentText, currentIndex, 1)
     
-    ; Handle special characters
+    ; Send character
     if (char = "`t") {
-        ; Send actual tab key instead of tab character
         Send("{Tab}")
+    } else if (char = "`n") {
+        Send("{Enter}")
     } else {
-        ; Send regular character
         SendText(char)
     }
     
     currentIndex++
     
-    ; Schedule next character only if not paused
+    ; Schedule next character
     if (!isPaused && isTyping) {
-        ; Human-like typing delays optimized for coding
+        ; Simple delays
         if (char = "`n") {
-            ; Moderate pause after newlines (thinking about next line of code)
-            delay := Random(800, 1500)   ; 0.8-1.5 seconds after newline
-        } else if (char = "{" || char = "}") {
-            ; Brief pause after braces (letting IDE auto-complete)
-            delay := Random(200, 400)    ; 0.2-0.4 seconds after braces
-        } else if (char = "(" || char = ")") {
-            ; Brief pause after parentheses
-            delay := Random(150, 300)    ; 0.15-0.3 seconds after parentheses
-        } else if (char = ";" || char = ":") {
-            ; Medium pause after code statements
-            delay := Random(300, 500)    ; 0.3-0.5 seconds after statements
-        } else if (char = ",") {
-            ; Quick pause after parameters
-            delay := Random(100, 200)    ; 0.1-0.2 seconds after parameters
+            delay := Random(500, 1000)
         } else if (char = " ") {
-            ; Variable pause between words (natural word spacing)
-            delay := Random(120, 300)    ; 0.12-0.3 seconds between words
+            delay := Random(100, 300)
         } else if (RegExMatch(char, "[A-Z]")) {
-            ; Slightly longer pause for capital letters (class names, functions)
-            delay := Random(150, 280)    ; 0.15-0.28 seconds for capitals
-        } else if (RegExMatch(char, "[0-9]")) {
-            ; Medium pause for numbers (thinking about values)
-            delay := Random(180, 350)    ; 0.18-0.35 seconds for numbers
-        } else if (RegExMatch(char, "[{}()\\[\\]]")) {
-            ; Quick typing for brackets and parentheses
-            delay := Random(80, 150)     ; 0.08-0.15 seconds for brackets
+            delay := Random(150, 300)
         } else {
-            ; Normal character typing speed for code
-            delay := Random(60, 150)     ; 0.06-0.15 seconds for regular chars
+            delay := Random(50, 150)
         }
         
-        ; Add occasional longer pauses to simulate thinking (5% chance)
-        if (Random(1, 100) <= 5) {
-            delay += Random(500, 1200)   ; Extra 0.5-1.2 seconds thinking pause
-        }
-        
-        ; Use timer to schedule next character (non-blocking)
         SetTimer(continueTyping, delay)
     }
 }

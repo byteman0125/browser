@@ -286,6 +286,7 @@ class StealthBrowser {
                     this.statusText.textContent = 'Loading...';
                 } else {
                     this.hideLoading();
+                    this.hideLoadingOverlay(); // Hide loading overlay when navigation completes
                     if (stopped) {
                         this.statusText.textContent = 'Stopped';
                     } else if (timeout) {
@@ -321,6 +322,13 @@ class StealthBrowser {
 
         ipcRenderer.on('browser-view-url', (event, { tabId, url }) => {
             console.log('Received browser-view-url:', { tabId, url, currentTabId: this.currentTabId });
+            // Update currentTabId if this is a tab switch event
+            if (tabId !== this.currentTabId) {
+                console.log('Tab switched from', this.currentTabId, 'to', tabId);
+                this.currentTabId = tabId;
+            }
+            
+            // Always update URL bar for the current tab
             if (tabId === this.currentTabId) {
                 // Show blank for new tabs, otherwise show the URL
                 this.urlInput.value = url === '' ? '' : url;
@@ -376,34 +384,42 @@ class StealthBrowser {
     }
 
     async navigateTo(url) {
-        // Check if we're already navigating
-        if (this.isNavigating) {
-            console.log('Navigation already in progress, queuing request:', url);
-            this.navigationQueue.push({ tabId: this.currentTabId, url });
-            return;
-        }
-
-        // Check if current tab is loading
-        const isLoading = this.loadingStates.get(this.currentTabId);
-        if (isLoading) {
-            console.log('Tab is currently loading, queuing navigation request:', url);
-            this.navigationQueue.push({ tabId: this.currentTabId, url });
-            return;
-        }
-
+        // Stop any current loading immediately to prevent crashes
+        console.log('Stopping current loading before navigating to:', url);
+        await ipcRenderer.invoke('browser-view-stop', this.currentTabId);
+        
+        // Clear any pending navigation queue for this tab
+        this.navigationQueue = this.navigationQueue.filter(item => item.tabId !== this.currentTabId);
+        
+        // Set loading state immediately
+        this.loadingStates.set(this.currentTabId, true);
+        this.isNavigating = true;
+        
+        // Show loading overlay to prevent interactions during transition
+        this.showLoadingOverlay();
+        
+        // Ensure buttons are enabled after a short delay (fallback)
+        setTimeout(() => {
+            this.updateNavigationButtons();
+        }, 1000);
+        
         try {
-            this.isNavigating = true;
             console.log('Navigating to:', url, 'in tab:', this.currentTabId);
+            
+            // Update URL bar immediately to show user feedback
+            if (this.urlInput) {
+                this.urlInput.value = url;
+                this.updateSecurityIndicator(url);
+            }
             
             await ipcRenderer.invoke('browser-view-navigate', { tabId: this.currentTabId, url });
             
-            // Process queued navigation requests after a short delay
-            setTimeout(() => {
-                this.processNavigationQueue();
-            }, 1000);
-            
         } catch (error) {
             console.error('Navigation failed:', error);
+            // Reset loading state on error
+            this.loadingStates.set(this.currentTabId, false);
+            this.hideLoadingOverlay();
+            this.updateNavigationButtons();
         } finally {
             this.isNavigating = false;
         }
@@ -630,32 +646,42 @@ class StealthBrowser {
     }
 
      async closeTab(tabId) {
-         const newCurrentTabId = await ipcRenderer.invoke('close-tab', tabId);
-         if (newCurrentTabId !== false) {
+         console.log('closeTab called with tabId:', tabId);
+         const result = await ipcRenderer.invoke('close-tab', tabId);
+         console.log('close-tab result:', result, 'type:', typeof result);
+         
+         if (result !== false) {
              // Remove tab element
              const tabElement = document.querySelector(`[data-tab="${tabId}"]`);
              if (tabElement) {
                  tabElement.remove();
              }
              
-             // Switch to new current tab if needed
-             if (newCurrentTabId && newCurrentTabId !== this.currentTabId) {
-                 this.currentTabId = newCurrentTabId;
+             // Check if we got a new current tab ID (number) or just true (tab closed but no switch)
+             console.log('Checking result type:', typeof result, 'value:', result, 'currentTabId:', this.currentTabId);
+             if (typeof result === 'number') {
+                 console.log('Got new current tab ID:', result);
+                 this.currentTabId = result;
                  
                  // Update active tab
                  document.querySelectorAll('.tab').forEach(tab => {
                      tab.classList.remove('active');
                  });
-                 const activeTab = document.querySelector(`[data-tab="${newCurrentTabId}"]`);
+                 const activeTab = document.querySelector(`[data-tab="${result}"]`);
                  if (activeTab) {
                      activeTab.classList.add('active');
                  }
                  
-                 // Update URL bar with new current tab's URL
+                 // Explicitly update URL bar for the new current tab
+                 console.log('Explicitly updating URL bar for new current tab:', result);
                  await this.updateUrlBarForCurrentTab();
                  
                  // Update navigation buttons
                  this.updateNavigationButtons();
+             } else if (result === true) {
+                 console.log('Tab closed but no switch needed (not current tab)');
+             } else {
+                 console.log('Tab close result not handled:', result, 'type:', typeof result);
              }
              
              this.tabs.delete(tabId);
@@ -1255,10 +1281,14 @@ class StealthBrowser {
     // Update URL bar for current tab
     async updateUrlBarForCurrentTab() {
         try {
+            console.log('updateUrlBarForCurrentTab called for tabId:', this.currentTabId);
             const currentUrl = await ipcRenderer.invoke('get-current-tab-url', this.currentTabId);
+            console.log('Got URL from main process:', currentUrl);
             if (this.urlInput) {
                 // Show blank for new tabs, otherwise show the URL
-                this.urlInput.value = (currentUrl === '') ? '' : currentUrl;
+                const displayUrl = (currentUrl === '') ? '' : currentUrl;
+                console.log('Setting URL input value to:', displayUrl);
+                this.urlInput.value = displayUrl;
                 this.updateSecurityIndicator(currentUrl);
                 
                 // Show/hide blank page overlay
@@ -1383,6 +1413,50 @@ class StealthBrowser {
         }
     }
 
+    showLoadingOverlay() {
+        // Create loading overlay if it doesn't exist
+        let overlay = document.getElementById('loading-overlay');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'loading-overlay';
+            overlay.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0, 0, 0, 0.1);
+                z-index: 100;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                pointer-events: none;
+            `;
+            overlay.innerHTML = `
+                <div style="
+                    background: rgba(0, 0, 0, 0.8);
+                    color: white;
+                    padding: 20px;
+                    border-radius: 8px;
+                    font-family: Arial, sans-serif;
+                    text-align: center;
+                    pointer-events: none;
+                ">
+                    <div style="margin-bottom: 10px;">Loading...</div>
+                    <div style="font-size: 12px; opacity: 0.7;">Please wait while navigating</div>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+        }
+        overlay.style.display = 'flex';
+    }
+
+    hideLoadingOverlay() {
+        const overlay = document.getElementById('loading-overlay');
+        if (overlay) {
+            overlay.style.display = 'none';
+        }
+    }
 
     showNotification(message, type = 'info') {
         console.log('Showing notification:', message, type);

@@ -315,11 +315,15 @@ body {
     padding: 8px 12px;
     border-radius: 12px 12px 0 0;
     gap: 12px;
+    position: relative;
+    z-index: 1000; /* Ensure nav bar is above loading overlay */
 }
 
 .nav-controls {
     display: flex;
     gap: 4px;
+    position: relative;
+    z-index: 1001; /* Ensure nav controls are above loading overlay */
 }
 
 .nav-btn {
@@ -336,6 +340,8 @@ body {
     transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     position: relative;
     overflow: hidden;
+    z-index: 1002; /* Ensure nav buttons are clickable */
+    pointer-events: auto; /* Explicitly enable clicks */
 }
 
 .nav-btn::before {
@@ -382,7 +388,7 @@ body {
     display: flex;
     align-items: center;
     position: relative;
-    z-index: 9999999;
+    z-index: 1001; /* Ensure address bar is above loading overlay */
 }
 
 .address-bar {
@@ -399,7 +405,8 @@ body {
     height: 40px;
     position: relative;
     overflow: visible;
-    z-index: 9999999;
+    z-index: 1002; /* Ensure address bar is clickable */
+    pointer-events: auto; /* Explicitly enable clicks */
 }
 
 .url-input-container {
@@ -515,6 +522,9 @@ body {
     color: #e8eaed;
     font-size: 14px;
     padding: 8px 12px;
+    position: relative;
+    z-index: 1002; /* Ensure URL input is clickable */
+    pointer-events: auto; /* Explicitly enable clicks */
 }
 
 #url-input::placeholder {
@@ -538,6 +548,8 @@ body {
         inset 0 1px 0 rgba(255, 255, 255, 0.2);
     position: relative;
     overflow: hidden;
+    z-index: 1002; /* Ensure go button is clickable */
+    pointer-events: auto; /* Explicitly enable clicks */
 }
 
 .go-btn::before {
@@ -590,6 +602,8 @@ body {
 .browser-controls {
     display: flex;
     gap: 4px;
+    position: relative;
+    z-index: 1000; /* Ensure controls are above loading overlay */
 }
 
 .control-btn {
@@ -604,11 +618,19 @@ body {
     color: #ffffff;
     cursor: pointer;
     transition: all 0.2s ease;
+    position: relative;
+    z-index: 1001; /* Ensure buttons are clickable */
+    pointer-events: auto; /* Explicitly enable clicks */
 }
 
 .control-btn:hover {
     background: rgba(255, 255, 255, 0.2);
     transform: translateY(-1px);
+}
+
+.control-btn:active {
+    transform: scale(0.95);
+    transition: all 0.1s ease;
 }
 
 /* Quick Navigation Buttons */
@@ -621,12 +643,20 @@ body {
     font-size: 16px;
     color: #ffffff;
     box-shadow: 0 2px 8px rgba(138, 180, 248, 0.2);
+    position: relative;
+    z-index: 1002; /* Higher z-index for quick nav buttons */
+    pointer-events: auto; /* Explicitly enable clicks */
 }
 
 .quick-nav-btn:hover {
     background: linear-gradient(135deg, #9bb5f9 0%, #7680eb 100%);
     transform: translateY(-1px) scale(1.05);
     box-shadow: 0 4px 12px rgba(138, 180, 248, 0.4);
+}
+
+.quick-nav-btn:active {
+    transform: scale(0.95);
+    transition: all 0.1s ease;
 }
 
 .stealth-btn.active {

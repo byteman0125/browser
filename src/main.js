@@ -3,9 +3,54 @@ process.env.ELECTRON_DISABLE_GPU = '1';
 process.env.CHROME_FLAGS = '--disable-gpu --disable-gpu-sandbox --disable-software-rasterizer';
 
 const { app, BrowserWindow, BrowserView, globalShortcut, ipcMain, session, Tray, Menu, nativeImage, screen, desktopCapturer, clipboard, dialog } = require('electron');
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
 
 // Disable hardware acceleration BEFORE app is ready
 app.disableHardwareAcceleration();
+
+// Set persistent user data directory for cookies and session data
+const userDataPath = path.join(os.homedir(), '.stealthbrowser', 'userdata');
+const cookiesBackupPath = path.join(userDataPath, 'cookies.json');
+if (!fs.existsSync(userDataPath)) {
+  fs.mkdirSync(userDataPath, { recursive: true });
+}
+app.setPath('userData', userDataPath);
+
+// Function to backup cookies to file
+async function backupCookies() {
+  try {
+    const persistentSession = session.fromPartition('persist:stealthbrowser');
+    const cookies = await persistentSession.cookies.get({});
+    fs.writeFileSync(cookiesBackupPath, JSON.stringify(cookies, null, 2));
+    console.log(`Backed up ${cookies.length} cookies to ${cookiesBackupPath}`);
+  } catch (error) {
+    console.error('Error backing up cookies:', error);
+  }
+}
+
+// Function to restore cookies from file
+async function restoreCookies() {
+  try {
+    if (fs.existsSync(cookiesBackupPath)) {
+      const cookiesData = fs.readFileSync(cookiesBackupPath, 'utf8');
+      const cookies = JSON.parse(cookiesData);
+      const persistentSession = session.fromPartition('persist:stealthbrowser');
+      
+      for (const cookie of cookies) {
+        try {
+          await persistentSession.cookies.set(cookie);
+        } catch (error) {
+          console.error('Error restoring cookie:', cookie.name, error);
+        }
+      }
+      console.log(`Restored ${cookies.length} cookies from backup`);
+    }
+  } catch (error) {
+    console.error('Error restoring cookies:', error);
+  }
+}
 
 // Global error handling to prevent crashes
 process.on('uncaughtException', (error) => {
@@ -66,11 +111,9 @@ process.on('SIGTERM', () => {
   }
   process.exit(0);
 });
-const path = require('path');
+
 const AutoLaunch = require('auto-launch');
 const Store = require('electron-store');
-const fs = require('fs');
-const os = require('os');
 const { spawn } = require('child_process');
 
 // Initialize store for settings
@@ -350,16 +393,21 @@ function updateTabUsage(tabId) {
   console.log('Tab usage updated:', tabUsageHistory);
 }
 
-function getMostRecentTab() {
-  // Find the most recent tab that still exists
+function getMostRecentTab(excludeTabId = null) {
+  console.log('getMostRecentTab called, tabUsageHistory:', tabUsageHistory);
+  console.log('Available browserViews:', Array.from(browserViews.keys()));
+  console.log('Excluding tab:', excludeTabId);
+  
+  // Find the most recent tab that still exists and is not excluded
   for (const tabId of tabUsageHistory) {
-    if (browserViews.has(tabId)) {
+    if (browserViews.has(tabId) && tabId !== excludeTabId) {
       console.log('Most recent tab found:', tabId);
       return tabId;
     }
   }
-  // Fallback to first available tab
-  const fallbackTab = Array.from(browserViews.keys())[0];
+  // Fallback to first available tab (excluding the excluded tab)
+  const availableTabs = Array.from(browserViews.keys()).filter(id => id !== excludeTabId);
+  const fallbackTab = availableTabs[0];
   console.log('Using fallback tab:', fallbackTab);
   return fallbackTab;
 }
@@ -532,6 +580,9 @@ function setContentProtection(enabled) {
 }
 
 function createWindow(startHidden = false) {
+  // Create persistent session for cookies and data
+  const persistentSession = session.fromPartition('persist:stealthbrowser');
+  
   // Create the browser window
   mainWindow = new BrowserWindow({
     width: 550,
@@ -608,6 +659,9 @@ function createWindow(startHidden = false) {
     v8CacheOptions: 'none', // Disable V8 cache
     additionalArguments: ['--disable-gpu', '--disable-gpu-sandbox', '--disable-software-rasterizer', '--disable-features=ScreenCapture,DisplayCapture,DesktopCapture,GetDisplayMedia,ScreenSharing,WebRTC,MediaStream,CanvasCapture,VideoCapture,AudioCapture,ScreenRecording,ScreenMirroring,RemoteDesktop,ScreenCaptureAPI,DisplayMediaAPI,GetUserMedia,MediaDevices,ScreenCapturePermission,DisplayCapturePermission']
   });
+
+  // Center the window on screen
+  mainWindow.center();
 
   // Load the main HTML file
   mainWindow.loadFile(path.join(__dirname, 'renderer.html'));
@@ -996,8 +1050,8 @@ function createBrowserView(tabId = 0, url = '') {
       // Enhanced stealth properties
       backgroundThrottling: false,
       offscreen: false,
-      // Content protection
-      partition: `persist:stealth-${tabId}`,
+      // Content protection - use persistent session for cookies
+      partition: 'persist:stealthbrowser',
       // Disable features that could be used for tracking
       disableBlinkFeatures: 'Auxclick',
       // Additional security
@@ -1511,8 +1565,6 @@ function isAutoHotkeyRunning() {
 // Function to start AutoHotkey script for Alt+L functionality
 async function startAutoHotkeyScript() {
   try {
-    const path = require('path');
-    const fs = require('fs');
     
     let typeWordPath;
     if (os.platform() === 'win32') {
@@ -1649,28 +1701,68 @@ function stopAutoHotkeyMonitoring() {
 }
 
 
+// Global variable to track if animation is running
+let isAnimating = false;
+let animationTimeouts = [];
+
+// Smooth window movement function with slicing animation
+function smoothMoveWindow(deltaX, deltaY) {
+  if (!mainWindow || isAnimating) return;
+  
+  // Clear any existing animation timeouts
+  animationTimeouts.forEach(timeout => clearTimeout(timeout));
+  animationTimeouts = [];
+  
+  isAnimating = true;
+  const [currentX, currentY] = mainWindow.getPosition();
+  const targetX = currentX + deltaX;
+  const targetY = currentY + deltaY;
+  
+  const steps = 30; // More steps for smoother animation
+  const stepDelay = 3; // Faster steps for fluid motion
+  
+  for (let i = 1; i <= steps; i++) {
+    const timeout = setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        const progress = i / steps;
+        // Smoother easing function
+        const easeProgress = progress < 0.5 
+          ? 2 * progress * progress 
+          : 1 - Math.pow(-2 * progress + 2, 2) / 2; // Ease-in-out
+        const newX = currentX + (deltaX * easeProgress);
+        const newY = currentY + (deltaY * easeProgress);
+        mainWindow.setPosition(Math.round(newX), Math.round(newY));
+        
+        // Mark animation as complete on last step
+        if (i === steps) {
+          isAnimating = false;
+        }
+      }
+    }, i * stepDelay);
+    
+    animationTimeouts.push(timeout);
+  }
+}
+
 function registerGlobalShortcuts() {
   console.log('Registering global shortcuts...');
   
-  // Ctrl+Shift + Right: Move window right
+  // Alt + Right: Move window right (smooth slicing animation)
   globalShortcut.register('Alt+Right', () => {
     if (mainWindow) {
-      const [x, y] = mainWindow.getPosition();
-      mainWindow.setPosition(x + 100, y);
+      smoothMoveWindow(100, 0);
     }
   });
 
-  // Ctrl+Shift + Left: Move window left
+  // Alt + Left: Move window left (smooth slicing animation)
   globalShortcut.register('Alt+Left', () => {
     if (mainWindow) {
-      const [x, y] = mainWindow.getPosition();
-      mainWindow.setPosition(x - 100, y);
+      smoothMoveWindow(-100, 0);
     }
   });
 
-
   // Ctrl+Alt + Up: Make window MORE OPAQUE (less transparent)
-  globalShortcut.register('Alt+PageUp', () => {
+  globalShortcut.register('Alt+Up', () => {
     console.log('MAKE MORE OPAQUE hotkey triggered!');
     console.log('Current opacity before change:', currentOpacity);
     if (mainWindow && currentOpacity < 1.0) {
@@ -1689,7 +1781,7 @@ function registerGlobalShortcuts() {
   });
 
   // Ctrl+Shift + Down: Make window MORE TRANSPARENT (less opaque)
-  globalShortcut.register('Alt+PageDown', () => {
+  globalShortcut.register('Alt+Down', () => {
     console.log('MAKE MORE TRANSPARENT hotkey triggered!');
     console.log('Current opacity before change:', currentOpacity);
     if (mainWindow && currentOpacity > 0.4) {
@@ -1707,14 +1799,19 @@ function registerGlobalShortcuts() {
     }
   });
 
-  // Ctrl+Shift + .: Hide/Show window
+  // Alt+X: Hide/Show window
   globalShortcut.register('Alt+X', () => {
+    console.log('Alt+X hotkey triggered!');
     if (mainWindow) {
       if (isHidden || !mainWindow.isVisible()) {
+        console.log('Showing window...');
         showMainWindow();
       } else {
+        console.log('Hiding window...');
         hideMainWindow();
       }
+    } else {
+      console.log('Main window not found!');
     }
   });
 
@@ -1727,32 +1824,6 @@ function registerGlobalShortcuts() {
   globalShortcut.register('Alt+S', () => {
     if (mainWindow) {
       startScreenCapture();
-    }
-  });
-
-  // Alt+PageUp: Scroll up in webview content
-  globalShortcut.register('Alt+Up', () => {
-    console.log('SCROLL UP hotkey triggered!');
-    if (mainWindow && browserViews.has(currentTabId)) {
-      const currentBrowserView = browserViews.get(currentTabId);
-      if (currentBrowserView && currentBrowserView.webContents && !currentBrowserView.webContents.isDestroyed()) {
-        currentBrowserView.webContents.executeJavaScript(`
-          window.scrollBy(0, -300);
-        `).catch(err => console.log('Scroll up failed:', err));
-      }
-    }
-  });
-
-  // Alt+PageDown: Scroll down in webview content
-  globalShortcut.register('Alt+Down', () => {
-    console.log('SCROLL DOWN hotkey triggered!');
-    if (mainWindow && browserViews.has(currentTabId)) {
-      const currentBrowserView = browserViews.get(currentTabId);
-      if (currentBrowserView && currentBrowserView.webContents && !currentBrowserView.webContents.isDestroyed()) {
-        currentBrowserView.webContents.executeJavaScript(`
-          window.scrollBy(0, 300);
-        `).catch(err => console.log('Scroll down failed:', err));
-      }
     }
   });
 
@@ -2144,7 +2215,10 @@ async function takeScreenshot(captureData) {
 
 
 // App event handlers
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  // Restore cookies from backup on startup
+  await restoreCookies();
+  
   // Performance optimizations for faster loading
   app.commandLine.appendSwitch('enable-gpu-rasterization');
   app.commandLine.appendSwitch('enable-zero-copy');
@@ -2309,6 +2383,9 @@ app.whenReady().then(() => {
   
   createWindow(isStartupLaunch);
   registerGlobalShortcuts();
+
+  // Set up periodic cookie backup (every 5 minutes)
+  setInterval(backupCookies, 5 * 60 * 1000);
 
   // Load URL history from persistent storage (like cookies)
   loadUrlHistory();
@@ -2594,6 +2671,9 @@ ipcMain.handle('set-cookie', async (event, { name, value, domain, path, secure, 
     // Set cookie in the current tab's session
     await currentBrowserView.webContents.session.cookies.set(cookieData);
 
+    // Backup cookies after setting new one
+    backupCookies();
+
     console.log(`Cookie set: ${name}=${value} for ${domain} (secure: ${secure}, httpOnly: ${httpOnly})`);
     return true;
   } catch (error) {
@@ -2613,6 +2693,10 @@ ipcMain.handle('set-cookie', async (event, { name, value, domain, path, secure, 
         };
         
         await currentBrowserView.webContents.session.cookies.set(cookieData);
+        
+        // Backup cookies after setting new one
+        backupCookies();
+        
         console.log(`Cookie set with http fallback: ${name}=${value} for ${domain}`);
         return true;
       } catch (fallbackError) {
@@ -2647,30 +2731,79 @@ ipcMain.handle('browser-view-navigate', (event, { tabId, url }) => {
   }
 
   try {
-    // If URL is empty, load blank page
-    if (url === '') {
-      browserView.webContents.loadURL('about:blank').then(() => {
-        console.log('Successfully loaded blank page');
-        // Send empty URL to renderer to show blank in address bar
-        mainWindow.webContents.send('browser-view-url', { tabId, url: '' });
-      }).catch(err => {
-        console.error('Failed to load blank page:', err);
-      });
-    } else {
-      // Handle regular URLs with better error handling
-      browserView.webContents.loadURL(url).then(() => {
-        console.log('Successfully navigated to:', url, 'in tab:', tabId);
-      }).catch(err => {
-        console.error('Failed to load URL:', url, 'in tab:', tabId, err);
-        // Try fallback
-        browserView.webContents.loadURL('data:text/html,<h1>Failed to load page</h1><p>Please check your internet connection.</p>').catch(fallbackErr => {
-          console.error('Fallback also failed:', fallbackErr);
-        });
-      });
+    // Stop any current loading to prevent crashes
+    console.log('Stopping current loading before navigating to:', url);
+    
+    // Disable interaction temporarily to prevent crashes
+    browserView.webContents.setIgnoreMenuShortcuts(true);
+    
+    // Stop loading immediately (no delay to avoid conflicts)
+    browserView.webContents.stop();
+    
+    // Clear any pending timeout for this tab
+    if (tabTimeouts.has(tabId)) {
+      clearTimeout(tabTimeouts.get(tabId));
+      tabTimeouts.delete(tabId);
     }
+    
+    // Send loading started event
+    mainWindow.webContents.send('browser-view-loading', { tabId, loading: true, stopped: false });
+
+    // Add small delay to ensure stop operation completes before starting new navigation
+    setTimeout(() => {
+      // If URL is empty, load blank page
+      if (url === '') {
+        browserView.webContents.loadURL('about:blank').then(() => {
+          console.log('Successfully loaded blank page');
+          // Send empty URL to renderer to show blank in address bar
+          mainWindow.webContents.send('browser-view-url', { tabId, url: '' });
+          // Send loading completed event
+          mainWindow.webContents.send('browser-view-loading', { tabId, loading: false, stopped: false });
+        }).catch(err => {
+          console.error('Failed to load blank page:', err);
+          mainWindow.webContents.send('browser-view-loading', { tabId, loading: false, stopped: false });
+        });
+      } else {
+        // Handle regular URLs with better error handling
+        browserView.webContents.loadURL(url).then(() => {
+          console.log('Successfully navigated to:', url, 'in tab:', tabId);
+          // Re-enable interactions
+          browserView.webContents.setIgnoreMenuShortcuts(false);
+          // Send loading completed event
+          mainWindow.webContents.send('browser-view-loading', { tabId, loading: false, stopped: false });
+        }).catch(err => {
+          console.error('Failed to load URL:', url, 'in tab:', tabId, err);
+          // Re-enable interactions even on error
+          browserView.webContents.setIgnoreMenuShortcuts(false);
+          
+          // Only show fallback if it's not an abort error (which is expected)
+          if (err.code !== 'ERR_ABORTED' && err.code !== 'ERR_FAILED') {
+            // Try fallback
+            browserView.webContents.loadURL('data:text/html,<h1>Failed to load page</h1><p>Please check your internet connection.</p>').then(() => {
+              mainWindow.webContents.send('browser-view-loading', { tabId, loading: false, stopped: false });
+            }).catch(fallbackErr => {
+              console.error('Fallback also failed:', fallbackErr);
+              mainWindow.webContents.send('browser-view-loading', { tabId, loading: false, stopped: false });
+            });
+          } else {
+            // ERR_ABORTED or ERR_FAILED are expected when stopping navigation, just complete loading
+            mainWindow.webContents.send('browser-view-loading', { tabId, loading: false, stopped: false });
+          }
+        });
+        
+        // Fallback: Re-enable interactions after 3 seconds regardless of loading state
+        setTimeout(() => {
+          if (browserView && !browserView.webContents.isDestroyed()) {
+            browserView.webContents.setIgnoreMenuShortcuts(false);
+            mainWindow.webContents.send('browser-view-loading', { tabId, loading: false, stopped: false });
+          }
+        }, 3000);
+      }
+    }, 100); // 100ms delay to ensure stop completes
     return true;
   } catch (error) {
     console.error('Navigation error for tab:', tabId, error);
+    mainWindow.webContents.send('browser-view-loading', { tabId, loading: false, stopped: false });
     return false;
   }
 });
@@ -2750,6 +2883,15 @@ ipcMain.handle('switch-tab', (event, tabId) => {
     mainWindow.setBrowserView(browserView);
     // Track tab usage when switching
     updateTabUsage(tabId);
+    
+    // Send the URL of the newly active tab to update the URL bar
+    setTimeout(() => {
+      const currentUrl = browserView.webContents.getURL();
+      const displayUrl = currentUrl === 'about:blank' ? '' : currentUrl;
+      console.log('Sending URL for switched tab:', { tabId, url: displayUrl });
+      mainWindow.webContents.send('browser-view-url', { tabId, url: displayUrl });
+    }, 50);
+    
     return true;
   }
   return false;
@@ -2781,6 +2923,37 @@ ipcMain.handle('close-tab', (event, tabId) => {
       tabTimeouts.delete(tabId);
     }
     
+    // Switch to another tab if we closed the current one (BEFORE removing from maps)
+    let newCurrentTabId = null;
+    if (tabId === currentTabId) {
+      const remainingTabs = Array.from(browserViews.keys()).filter(id => id !== tabId);
+      console.log('Closed current tab, remaining tabs:', remainingTabs);
+      if (remainingTabs.length > 0) {
+        // Use the most recently used tab instead of just the first one (excluding the tab being closed)
+        const newCurrentTab = getMostRecentTab(tabId);
+        console.log('Selected new current tab:', newCurrentTab);
+        if (newCurrentTab !== null && newCurrentTab !== undefined && browserViews.has(newCurrentTab)) {
+          currentTabId = newCurrentTab;
+          const newBrowserView = browserViews.get(newCurrentTab);
+          console.log('Setting new BrowserView:', newBrowserView);
+          mainWindow.setBrowserView(newBrowserView);
+          console.log('Switched to new tab:', newCurrentTab);
+          
+          // Verify the BrowserView was set correctly
+          const currentView = mainWindow.getBrowserView();
+          console.log('Current BrowserView after switch:', currentView === newBrowserView ? 'CORRECT' : 'INCORRECT');
+          
+          newCurrentTabId = newCurrentTab;
+        } else {
+          console.log('Failed to switch to new tab - tab not found or invalid');
+          console.log('newCurrentTab:', newCurrentTab);
+          console.log('browserViews.has(newCurrentTab):', browserViews.has(newCurrentTab));
+        }
+      } else {
+        console.log('No remaining tabs to switch to');
+      }
+    }
+    
     // Remove from our tracking map
     browserViews.delete(tabId);
     
@@ -2788,37 +2961,35 @@ ipcMain.handle('close-tab', (event, tabId) => {
     const historyIndex = tabUsageHistory.indexOf(tabId);
     if (historyIndex > -1) {
       tabUsageHistory.splice(historyIndex, 1);
+      console.log('Removed tab from usage history:', tabId, 'Remaining history:', tabUsageHistory);
     }
     
     // Save tabs when one is closed
     saveTabs();
     
-    // Switch to another tab if we closed the current one
-    if (tabId === currentTabId) {
-      const remainingTabs = Array.from(browserViews.keys());
-      if (remainingTabs.length > 0) {
-        // Use the most recently used tab instead of just the first one
-        const newCurrentTab = getMostRecentTab();
-        if (newCurrentTab && browserViews.has(newCurrentTab)) {
-          currentTabId = newCurrentTab;
-          mainWindow.setBrowserView(browserViews.get(newCurrentTab));
-          return newCurrentTab;
-        }
-      }
+    // Return the new current tab ID if we switched
+    if (newCurrentTabId) {
+      console.log('Returning new current tab ID:', newCurrentTabId);
+      return newCurrentTabId;
     }
-    return true;
+    console.log('Returning true (tab closed but no switch needed)');
+    return true; // Tab closed but no switch needed (not current tab)
   }
-  return false;
+  return false; // Tab not found or only one tab remaining
 });
 
 // Get current tab URL
 ipcMain.handle('get-current-tab-url', (event, tabId) => {
+  console.log('get-current-tab-url called for tabId:', tabId);
   const browserView = browserViews.get(tabId);
   if (browserView) {
     const currentUrl = browserView.webContents.getURL();
+    const displayUrl = currentUrl === 'about:blank' ? '' : currentUrl;
+    console.log('Returning URL for tab', tabId, ':', displayUrl);
     // Return empty string for about:blank to show blank in address bar
-    return currentUrl === 'about:blank' ? '' : currentUrl;
+    return displayUrl;
   }
+  console.log('No browserView found for tabId:', tabId);
   return null;
 });
 
